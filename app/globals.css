@@ -1,26 +1,99 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+    --color-cream: #FFFDF5;
+    /* Neo Background */
+    --color-paper: #FFFFFF;
+    --color-primary: #3b82f6;
+    /* Blue 500 */
+    --color-primary-bold: #2563eb;
+    /* Blue 600 */
+    --color-secondary: #a855f7;
+    /* Purple 500 */
+    --color-secondary-bold: #9333ea;
+    /* Purple 600 */
+
+    /* Accents */
+    --color-accent-yellow: #facc15;
+    --color-accent-green: #22c55e;
+    --color-accent-red: #ef4444;
+
+    /* Borders */
+    --color-border: #000000;
+    /* Pure Black */
+
+    /* Shadows (Hard) */
+    --shadow-neo: 4px 4px 0px 0px #000000;
+    --shadow-neo-sm: 2px 2px 0px 0px #000000;
+    --shadow-neo-hover: 6px 6px 0px 0px #000000;
+    --shadow-neo-inset: inset 2px 2px 0px 0px #000000;
+
+    /* Border Radius (Hard/Slight) */
+    --radius-none: 0px;
+    --radius-sm: 2px;
+    --radius-md: 4px;
+    --radius-xl: 12px;
+    /* Providing some rounding for specific elements if needed */
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+:root {
+    --background: #f0f2f5;
+    --foreground: #111111;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+    :root {
+        /* Keeping Light Mode default as per Neobrutalism design */
+        --background: #f0f2f5;
+        --foreground: #111111;
+    }
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+    color: var(--foreground);
+    background: var(--background);
+    font-family: 'Public Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 12px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-left: 2px solid #000;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #000;
+    border: 2px solid #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #333;
+}
+
+/* Utility for card hover lift effect */
+.hover-lift {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hover-lift:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px 0px #000000;
+}
+
+/* Neobrutal Utility Classes (Hard V4) */
+.card-base {
+    @apply bg-white border-4 border-black shadow-neo;
+}
+
+.btn-primary {
+    @apply bg-blue-500 text-white font-black uppercase tracking-wide px-6 py-3 border-2 border-black shadow-neo hover:-translate-y-[2px] hover:-translate-x-[2px] hover:shadow-none transition-all active:translate-y-0 active:translate-x-0 active:shadow-neo-inset;
+}
+
+.btn-secondary {
+    @apply bg-white text-black font-black uppercase tracking-wide px-6 py-3 border-2 border-black shadow-neo hover:bg-gray-50 hover:-translate-y-[2px] hover:-translate-x-[2px] hover:shadow-none transition-all active:translate-y-0 active:translate-x-0 active:shadow-neo-inset;
 }
