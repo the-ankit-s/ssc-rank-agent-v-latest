@@ -1,18 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { submissions, exams, shifts } from "@/lib/db/schema";
-import { eq, desc, sql, like, and, or, gte, lte, count } from "drizzle-orm";
+import { eq, desc, asc, count, like, and, or, gte, lte, inArray } from "drizzle-orm";
 
-// GET - List submissions with filters
+// GET - List submissions with advanced filters, sorting, and pagination
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
         const search = searchParams.get("search");
         const examId = searchParams.get("examId");
         const shiftId = searchParams.get("shiftId");
-        const category = searchParams.get("category");
+        const categories = searchParams.get("category");
+        const gender = searchParams.get("gender");
+        const scoreMin = searchParams.get("scoreMin");
+        const scoreMax = searchParams.get("scoreMax");
+        const rankMin = searchParams.get("rankMin");
+        const rankMax = searchParams.get("rankMax");
+        const dateFrom = searchParams.get("dateFrom");
+        const dateTo = searchParams.get("dateTo");
+        const source = searchParams.get("source");
+        const sortField = searchParams.get("sort") || "createdAt";
+        const sortOrder = searchParams.get("order") || "desc";
         const page = parseInt(searchParams.get("page") || "1");
-        const limit = parseInt(searchParams.get("limit") || "50");
+        const limit = parseInt(searchParams.get("limit") || "25");
         const offset = (page - 1) * limit;
 
         // Build conditions
@@ -27,17 +37,65 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        if (examId) {
+        if (examId && examId !== "all") {
             conditions.push(eq(submissions.examId, parseInt(examId)));
         }
 
-        if (shiftId) {
+        if (shiftId && shiftId !== "all") {
             conditions.push(eq(submissions.shiftId, parseInt(shiftId)));
         }
 
-        if (category && category !== "all") {
-            conditions.push(eq(submissions.category, category as any));
+        if (categories && categories !== "all") {
+            const categoryArray = categories.split(",");
+            if (categoryArray.length > 0) {
+                conditions.push(inArray(submissions.category, categoryArray as any));
+            }
         }
+
+        if (gender && gender !== "all") {
+            conditions.push(eq(submissions.gender, gender as any));
+        }
+
+        if (scoreMin) {
+            conditions.push(gte(submissions.rawScore, parseFloat(scoreMin)));
+        }
+
+        if (scoreMax) {
+            conditions.push(lte(submissions.rawScore, parseFloat(scoreMax)));
+        }
+
+        if (rankMin) {
+            conditions.push(gte(submissions.overallRank, parseInt(rankMin)));
+        }
+
+        if (rankMax) {
+            conditions.push(lte(submissions.overallRank, parseInt(rankMax)));
+        }
+
+        if (dateFrom) {
+            conditions.push(gte(submissions.createdAt, new Date(dateFrom)));
+        }
+
+        if (dateTo) {
+            conditions.push(lte(submissions.createdAt, new Date(dateTo)));
+        }
+
+        if (source && source !== "all") {
+            conditions.push(eq(submissions.source, source));
+        }
+
+        // Determine sort order
+        const sortColumns: Record<string, any> = {
+            createdAt: submissions.createdAt,
+            rawScore: submissions.rawScore,
+            normalizedScore: submissions.normalizedScore,
+            overallRank: submissions.overallRank,
+            categoryRank: submissions.categoryRank,
+            accuracy: submissions.accuracy,
+        };
+
+        const sortColumn = sortColumns[sortField] || submissions.createdAt;
+        const orderFn = sortOrder === "asc" ? asc : desc;
 
         // Get submissions
         const submissionsList = await db
@@ -46,18 +104,24 @@ export async function GET(request: NextRequest) {
                 rollNumber: submissions.rollNumber,
                 name: submissions.name,
                 category: submissions.category,
+                gender: submissions.gender,
                 rawScore: submissions.rawScore,
                 normalizedScore: submissions.normalizedScore,
                 overallRank: submissions.overallRank,
+                overallPercentile: submissions.overallPercentile,
                 categoryRank: submissions.categoryRank,
                 accuracy: submissions.accuracy,
+                totalAttempted: submissions.totalAttempted,
+                totalCorrect: submissions.totalCorrect,
+                totalWrong: submissions.totalWrong,
                 examId: submissions.examId,
                 shiftId: submissions.shiftId,
+                source: submissions.source,
                 createdAt: submissions.createdAt,
             })
             .from(submissions)
             .where(conditions.length ? and(...conditions) : undefined)
-            .orderBy(desc(submissions.createdAt))
+            .orderBy(orderFn(sortColumn))
             .limit(limit)
             .offset(offset);
 
@@ -67,15 +131,16 @@ export async function GET(request: NextRequest) {
             .from(submissions)
             .where(conditions.length ? and(...conditions) : undefined);
 
-        // Get exam names
+        // Get exam names and totals
         const examIds = [...new Set(submissionsList.map((s) => s.examId))];
-        const examNames: Record<number, string> = {};
+        const examData: Record<number, { name: string; totalMarks: number }> = {};
         if (examIds.length > 0) {
-            const examData = await db
-                .select({ id: exams.id, name: exams.name })
-                .from(exams);
-            examData.forEach((e) => {
-                examNames[e.id] = e.name;
+            const examsList = await db
+                .select({ id: exams.id, name: exams.name, totalMarks: exams.totalMarks })
+                .from(exams)
+                .where(inArray(exams.id, examIds));
+            examsList.forEach((e) => {
+                examData[e.id] = { name: e.name, totalMarks: e.totalMarks };
             });
         }
 
@@ -85,7 +150,8 @@ export async function GET(request: NextRequest) {
         if (shiftIds.length > 0) {
             const shiftData = await db
                 .select({ id: shifts.id, shiftCode: shifts.shiftCode })
-                .from(shifts);
+                .from(shifts)
+                .where(inArray(shifts.id, shiftIds));
             shiftData.forEach((s) => {
                 shiftCodes[s.id] = s.shiftCode;
             });
@@ -94,7 +160,8 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({
             submissions: submissionsList.map((s) => ({
                 ...s,
-                examName: examNames[s.examId] || "Unknown",
+                examName: examData[s.examId]?.name || "Unknown",
+                examTotal: examData[s.examId]?.totalMarks || 200,
                 shiftCode: shiftCodes[s.shiftId] || "Unknown",
             })),
             pagination: {
@@ -120,9 +187,7 @@ export async function DELETE(request: NextRequest) {
             return NextResponse.json({ error: "No IDs provided" }, { status: 400 });
         }
 
-        for (const id of ids) {
-            await db.delete(submissions).where(eq(submissions.id, id));
-        }
+        await db.delete(submissions).where(inArray(submissions.id, ids));
 
         return NextResponse.json({ success: true, deleted: ids.length });
     } catch (error) {
