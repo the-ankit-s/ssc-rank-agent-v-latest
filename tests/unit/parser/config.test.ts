@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { EXAM_CONFIGS, type ExamConfig } from '@/lib/parser/config';
 import type { SSCExamVariant } from '@/lib/parser/types';
 
