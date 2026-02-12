@@ -110,7 +110,7 @@ describe("Submissions API Logic", () => {
             expect(totalPages).toBe(6);
         });
 
-        it("should calculate total pages as 1 for empty results", () => {
+        it("should calculate total pages as 0 for empty results", () => {
             const total = 0;
             const limit = 25;
             const totalPages = Math.ceil(total / limit);

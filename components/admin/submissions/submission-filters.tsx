@@ -123,8 +123,9 @@ export function SubmissionFiltersPanel({
                             <select
                                 value={filters.shiftId}
                                 onChange={(e) => handleChange("shiftId", e.target.value)}
-                                className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-black outline-none transition-colors"
+                                className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-black outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 disabled={filters.examId === "all"}
+                                aria-label={filters.examId === "all" ? "Select an exam first to enable shift filter" : "Select shift"}
                             >
                                 <option value="all">All Shifts</option>
                                 {shifts.map((shift) => (

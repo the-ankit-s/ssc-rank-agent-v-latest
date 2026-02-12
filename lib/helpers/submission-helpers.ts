@@ -43,7 +43,7 @@ export function getCategoryColor(category: string): {
  * Calculate percentile
  */
 export function calculatePercentile(rank: number, total: number): number {
-    if (!rank || !total) return 0;
+    if (rank === null || rank === undefined || rank === 0 || !total) return 0;
     return Number((((total - rank + 1) / total) * 100).toFixed(2));
 }
 

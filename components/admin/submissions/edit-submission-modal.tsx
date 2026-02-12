@@ -151,7 +151,9 @@ export function EditSubmissionModal({
                     </div>
 
                     {/* Override Reason */}
-                    {formData.manualScoreOverride !== undefined && (
+                    {formData.manualScoreOverride !== undefined && 
+                     formData.manualScoreOverride !== null && 
+                     formData.manualScoreOverride !== 0 && (
                         <div>
                             <label className="block text-sm font-bold text-gray-700 mb-2">
                                 Override Reason
