@@ -62,20 +62,31 @@ export async function POST(request: NextRequest) {
             "Submitted At",
         ];
 
+        // Helper function to escape CSV values
+        const escapeCSV = (value: string | number | null | undefined): string => {
+            if (value === null || value === undefined) return "";
+            const str = String(value);
+            // If the value contains comma, quote, or newline, wrap it in quotes and escape quotes
+            if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+                return `"${str.replace(/"/g, '""')}"`;
+            }
+            return str;
+        };
+
         const rows = submissionsList.map((s) => [
             s.id,
-            s.rollNumber,
-            s.name,
-            examNames[s.examId] || "Unknown",
-            shiftCodes[s.shiftId] || "Unknown",
-            s.category,
-            s.gender,
+            escapeCSV(s.rollNumber),
+            escapeCSV(s.name),
+            escapeCSV(examNames[s.examId] || "Unknown"),
+            escapeCSV(shiftCodes[s.shiftId] || "Unknown"),
+            escapeCSV(s.category),
+            escapeCSV(s.gender),
             s.rawScore,
             s.normalizedScore || "N/A",
             s.overallRank || "N/A",
             s.categoryRank || "N/A",
             s.accuracy ? `${s.accuracy.toFixed(2)}%` : "N/A",
-            s.createdAt?.toISOString() || "",
+            escapeCSV(s.createdAt?.toISOString() || ""),
         ]);
 
         const csv = [headers, ...rows].map((row) => row.join(",")).join("\n");

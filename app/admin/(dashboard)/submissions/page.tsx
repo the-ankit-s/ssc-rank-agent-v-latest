@@ -26,7 +26,7 @@ interface Submission {
     accuracy: number | null;
     totalCandidates: number;
     submittedAt: string;
-    examTotalMarks: number;
+    examTotal: number;
 }
 
 interface Pagination {
@@ -187,8 +187,8 @@ export default function SubmissionsPage() {
             onConfirm: async () => {
                 setDeleteModal((prev) => ({ ...prev, isDeleting: true }));
                 try {
-                    const res = await fetch("/api/admin/submissions/bulk-delete", {
-                        method: "POST",
+                    const res = await fetch("/api/admin/submissions", {
+                        method: "DELETE",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ ids: selectedIds }),
                     });
@@ -213,8 +213,11 @@ export default function SubmissionsPage() {
 
     const handleBulkExport = async () => {
         try {
-            const params = new URLSearchParams({ ids: selectedIds.join(",") });
-            const res = await fetch(`/api/admin/submissions/export?${params}`);
+            const res = await fetch("/api/admin/submissions/export", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ids: selectedIds }),
+            });
             const blob = await res.blob();
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement("a");
@@ -236,10 +239,10 @@ export default function SubmissionsPage() {
         }
 
         try {
-            const res = await fetch("/api/admin/submissions/recalculate-ranks", {
+            const res = await fetch("/api/admin/submissions/bulk", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ids: selectedIds }),
+                body: JSON.stringify({ action: "recalculate", ids: selectedIds }),
             });
 
             if (res.ok) {
@@ -497,7 +500,7 @@ export default function SubmissionsPage() {
                                             <td className="p-4">
                                                 <ScoreIndicator
                                                     score={submission.rawScore}
-                                                    examTotal={submission.examTotalMarks || 200}
+                                                    examTotal={submission.examTotal}
                                                     size="md"
                                                 />
                                             </td>
