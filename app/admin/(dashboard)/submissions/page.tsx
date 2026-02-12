@@ -25,7 +25,7 @@ interface Submission {
     categoryRank: number | null;
     accuracy: number | null;
     totalCandidates: number;
-    submittedAt: string;
+    createdAt: string;
     examTotal: number;
 }
 
@@ -63,7 +63,7 @@ export default function SubmissionsPage() {
         dateTo: "",
         source: "all",
     });
-    const [sorting, setSorting] = useState({ field: "submittedAt", order: "desc" });
+    const [sorting, setSorting] = useState({ field: "createdAt", order: "desc" });
     const [deleteModal, setDeleteModal] = useState({
         isOpen: false,
         title: "",
@@ -410,11 +410,11 @@ export default function SubmissionsPage() {
                                 </th>
                                 <th
                                     className="p-4 text-xs font-bold text-gray-700 uppercase tracking-wider cursor-pointer hover:text-gray-900 group"
-                                    onClick={() => handleSort("submittedAt")}
+                                    onClick={() => handleSort("createdAt")}
                                 >
                                     <div className="flex items-center gap-1">
                                         Submitted
-                                        {getSortIcon("submittedAt")}
+                                        {getSortIcon("createdAt")}
                                     </div>
                                 </th>
                                 <th className="p-4 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">
@@ -564,7 +564,7 @@ export default function SubmissionsPage() {
                                             </td>
                                             <td className="p-4">
                                                 <span className="text-sm text-gray-500">
-                                                    {formatDistanceToNow(new Date(submission.submittedAt), {
+                                                    {formatDistanceToNow(new Date(submission.createdAt), {
                                                         addSuffix: true,
                                                     })}
                                                 </span>
