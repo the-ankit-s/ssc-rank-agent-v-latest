@@ -39,12 +39,7 @@ export {
   auditEntityEnum,
 } from '@/lib/db/schema';
 
-// Re-export schema types for convenience
-export type {
-  Exam,
-  Shift,
-  Submission,
-  Cutoff,
-  ScheduledJob,
-  AppLog,
-} from '@/lib/db/schema';
+// Note: Table schemas are available as objects (exams, shifts, submissions, etc.)
+// from '@/lib/db/schema'. To get TypeScript types from these tables, use:
+// import { type InferSelectModel } from 'drizzle-orm';
+// type Exam = InferSelectModel<typeof exams>;
