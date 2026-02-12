@@ -143,6 +143,9 @@ export default function SubmissionDetailsPage({ params }: { params: Promise<{ id
     const { submission, exam, shift } = data;
     const sections = Object.keys(submission.sectionPerformance || {});
     const totalCandidates = exam?.totalSubmissions || 1000;
+    // Use actual shift candidate count or fallback to exam total
+    const categoryTotalCandidates = totalCandidates; // TODO: Fetch actual category-wise counts from API
+    const stateTotalCandidates = totalCandidates; // TODO: Fetch actual state-wise counts from API
 
     return (
         <div className="space-y-6">
@@ -399,21 +402,21 @@ export default function SubmissionDetailsPage({ params }: { params: Promise<{ id
                     <RankCard
                         title="Category Rank"
                         rank={submission.categoryRank}
-                        totalCandidates={Math.floor(totalCandidates * 0.3)}
+                        totalCandidates={categoryTotalCandidates}
                         percentile={submission.categoryPercentile}
                         color="purple"
                     />
                     <RankCard
                         title="Shift Rank"
                         rank={submission.shiftRank}
-                        totalCandidates={shift?.candidateCount || 100}
+                        totalCandidates={shift?.candidateCount || totalCandidates}
                         percentile={submission.shiftPercentile}
                         color="green"
                     />
                     <RankCard
                         title="State Rank"
                         rank={submission.stateRank}
-                        totalCandidates={Math.floor(totalCandidates * 0.1)}
+                        totalCandidates={stateTotalCandidates}
                         percentile={null}
                         color="orange"
                     />

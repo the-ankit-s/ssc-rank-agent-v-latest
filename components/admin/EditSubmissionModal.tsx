@@ -110,11 +110,11 @@ export default function EditSubmissionModal({
                 className="w-full px-4 py-2 border-2 border-black rounded-lg font-medium"
                 required
               >
-                <option value="GEN">GEN</option>
-                <option value="EWS">EWS</option>
+                <option value="UR">UR</option>
                 <option value="OBC">OBC</option>
                 <option value="SC">SC</option>
                 <option value="ST">ST</option>
+                <option value="EWS">EWS</option>
               </select>
             </div>
 

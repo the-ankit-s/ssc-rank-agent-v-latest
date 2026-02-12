@@ -64,6 +64,9 @@ export async function POST(
 
             const sectionPerformance: Record<string, any> = {};
 
+            // TODO: Support section-specific and question-specific marking schemes
+            // Currently assumes all questions use the same defaultPositive/defaultNegative
+
             responses.forEach((response) => {
                 const section = response.section;
                 if (!sectionPerformance[section]) {
