@@ -86,6 +86,48 @@ export async function PUT(
     }
 }
 
+// PATCH - Partial update submission (for edit modal)
+export async function PATCH(
+    request: NextRequest,
+    { params }: { params: Promise<{ id: string }> }
+) {
+    try {
+        const { id } = await params;
+        const submissionId = parseInt(id);
+        const body = await request.json();
+
+        if (isNaN(submissionId)) {
+            return NextResponse.json({ error: "Invalid submission ID" }, { status: 400 });
+        }
+
+        const updateData: any = {
+            updatedAt: new Date(),
+        };
+
+        if (body.name !== undefined) updateData.name = body.name;
+        if (body.fatherName !== undefined) updateData.fatherName = body.fatherName;
+        if (body.category !== undefined) updateData.category = body.category;
+        if (body.gender !== undefined) updateData.gender = body.gender;
+        if (body.state !== undefined) updateData.state = body.state;
+        if (body.isPWD !== undefined) updateData.isPWD = body.isPWD;
+        if (body.isExServiceman !== undefined) updateData.isExServiceman = body.isExServiceman;
+        if (body.adminNotes !== undefined) updateData.adminNotes = body.adminNotes;
+        if (body.isDisputed !== undefined) updateData.isDisputed = body.isDisputed;
+        if (body.isResultPublic !== undefined) updateData.isResultPublic = body.isResultPublic;
+
+        const [updated] = await db
+            .update(submissions)
+            .set(updateData)
+            .where(eq(submissions.id, submissionId))
+            .returning();
+
+        return NextResponse.json({ submission: updated, success: true });
+    } catch (error) {
+        console.error("Error patching submission:", error);
+        return NextResponse.json({ error: "Failed to update submission" }, { status: 500 });
+    }
+}
+
 // DELETE - Delete submission
 export async function DELETE(
     request: NextRequest,
