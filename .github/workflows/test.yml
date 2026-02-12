@@ -11,6 +11,21 @@ jobs:
     name: Test & Build
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rankmitra_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
     env:
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/rankmitra_test"
 
@@ -25,10 +40,6 @@ jobs:
 
     - name: Install dependencies
       run: npm ci
-
-      # Linting (using Biome if available, or just skip if not yet set up)
-      #- name: Lint
-      #  run: npm run lint
 
     - name: Type Check
       run: npx tsc --noEmit
