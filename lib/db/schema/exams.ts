@@ -22,6 +22,10 @@ import {
 import type { SectionConfig, SectionPerformance, PercentileCutoffs } from "./interfaces";
 import { adminUsers } from "./admin";
 
+// Import tables for relations (late-bound, no circular dependency issue)
+import { dailyAnalytics } from "./analytics";
+import { resultViews, userFeedback } from "./engagement";
+
 export const exams = pgTable(
   "exams",
   {
@@ -314,6 +318,7 @@ export const examsRelations = relations(exams, ({ many }) => ({
   shifts: many(shifts),
   submissions: many(submissions),
   cutoffs: many(cutoffs),
+  dailyAnalytics: many(dailyAnalytics),
 }));
 
 export const shiftsRelations = relations(shifts, ({ one, many }) => ({
@@ -324,7 +329,7 @@ export const shiftsRelations = relations(shifts, ({ one, many }) => ({
   submissions: many(submissions),
 }));
 
-export const submissionsRelations = relations(submissions, ({ one }) => ({
+export const submissionsRelations = relations(submissions, ({ one, many }) => ({
   exam: one(exams, {
     fields: [submissions.examId],
     references: [exams.id],
@@ -333,6 +338,8 @@ export const submissionsRelations = relations(submissions, ({ one }) => ({
     fields: [submissions.shiftId],
     references: [shifts.id],
   }),
+  resultViews: many(resultViews),
+  feedback: many(userFeedback),
 }));
 
 export const cutoffsRelations = relations(cutoffs, ({ one }) => ({
