@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useSubmissionHistory } from "@/lib/hooks/use-submission-history";
 
 interface Exam {
     id: number;
@@ -12,6 +13,7 @@ interface Exam {
 export default function SubmitForm() {
     const router = useRouter();
     const searchParams = useSearchParams();
+    const { saveSubmission } = useSubmissionHistory();
     const defaultExamSlug = searchParams.get("exam") || "";
 
     const [exams, setExams] = useState<Exam[]>([]);
@@ -47,7 +49,7 @@ export default function SubmitForm() {
             // Default to first exam if no param
             setSelectedExam(exams[0].slug);
         }
-    }, [defaultExamSlug, exams]);
+    }, [defaultExamSlug, exams, selectedExam]); // Added selectedExam to dependency array
 
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
@@ -56,10 +58,10 @@ export default function SubmitForm() {
 
         const formData = new FormData(e.currentTarget);
         const data = {
-            url: formData.get("url"),
-            category: formData.get("category"),
-            exam: formData.get("exam"), // This will get value from select
-            password: formData.get("password"),
+            url: formData.get("url") as string, // Type assertion
+            category: formData.get("category") as string, // Type assertion
+            exam: formData.get("exam") as string, // This will get value from select, Type assertion
+            password: formData.get("password") as string, // Type assertion
         };
 
         try {
@@ -74,6 +76,9 @@ export default function SubmitForm() {
             if (!res.ok) {
                 throw new Error(result.error || "Failed to submit");
             }
+
+            // Save to history
+            saveSubmission(data.exam, result.submissionId); // Used saveSubmission
 
             router.push(`/result/${result.submissionId}`);
         } catch (err) {

@@ -5,10 +5,13 @@ import { useRouter } from "next/navigation";
 import Navbar from "@/components/navbar";
 import Footer from "@/components/footer";
 
+import { useSubmissionHistory } from "@/lib/hooks/use-submission-history";
+
 export default function SubmitPage() {
     const router = useRouter();
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState("");
+    const { saveSubmission } = useSubmissionHistory();
 
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
@@ -34,6 +37,9 @@ export default function SubmitPage() {
             }
 
             const data = await response.json();
+
+            // Save to history
+            saveSubmission(exam, data.submissionId);
 
             // Redirect to results page
             router.push(`/result/${data.submissionId}`);
