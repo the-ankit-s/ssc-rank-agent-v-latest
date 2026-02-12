@@ -46,7 +46,7 @@ export async function normalizeScores(jobId: number, metadata?: any) {
             WHERE shifts.id = ShiftStats.shift_id;
         `);
 
-        // 2. Calculate Global Mean and StdDev
+        // 2. Fetch Global Stats (needed for Difficulty & Normalization)
         const [globalStats] = await db
             .select({
                 avg: sql<number>`AVG(raw_score)`,
@@ -55,10 +55,26 @@ export async function normalizeScores(jobId: number, metadata?: any) {
             .from(submissions)
             .where(eq(submissions.examId, examId));
 
-        const globalAvg = globalStats.avg || 0;
-        const globalStd = globalStats.std || 1;
+        const globalAvg = globalStats?.avg ? Number(globalStats.avg) : 0;
+        const globalStd = globalStats?.std ? Number(globalStats.std) : 1;
 
-        // 3. Apply Z-Score Normalization
+        // 3. Update Difficulty Labels based on Global Avg
+        if (globalAvg > 0) {
+            // Using raw values for arithmetic constants to prevent driver type inference issues
+            await db.execute(sql`
+                UPDATE shifts
+                SET 
+                    difficulty_index = avg_raw_score / ${globalAvg},
+                    difficulty_label = CASE 
+                        WHEN avg_raw_score > ${globalAvg + 10} THEN 'Easy'
+                        WHEN avg_raw_score < ${globalAvg - 10} THEN 'Difficult'
+                        ELSE 'Moderate'
+                    END
+                WHERE exam_id = ${examId} AND candidate_count > 0;
+            `);
+        }
+
+        // 4. Apply Z-Score Normalization
         await db.execute(sql`
             UPDATE submissions s
             SET normalized_score = (
@@ -70,7 +86,7 @@ export async function normalizeScores(jobId: number, metadata?: any) {
               AND sh.std_dev > 0;
         `);
 
-        // Handle cases where StdDev is 0
+        // Handle cases where StdDev is 0 (fallback to raw score)
         await db.execute(sql`
             UPDATE submissions s
             SET normalized_score = s.raw_score

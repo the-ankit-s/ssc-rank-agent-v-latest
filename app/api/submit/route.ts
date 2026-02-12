@@ -111,6 +111,11 @@ export async function POST(request: NextRequest) {
                     candidateCount: 0
                 }).returning();
                 shiftId = newShift.id;
+
+                // Update total shifts count for the exam
+                await db.update(exams)
+                    .set({ totalShifts: sql`${exams.totalShifts} + 1` })
+                    .where(eq(exams.id, examData.id));
             }
         }
 

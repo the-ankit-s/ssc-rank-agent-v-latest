@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { submissions, exams, shifts } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 // GET - Get single submission with full details
 export async function GET(
@@ -99,7 +99,27 @@ export async function DELETE(
             return NextResponse.json({ error: "Invalid submission ID" }, { status: 400 });
         }
 
+        // Get submission details before deletion to update stats
+        const [submissionToDelete] = await db
+            .select()
+            .from(submissions)
+            .where(eq(submissions.id, submissionId))
+            .limit(1);
+
+        if (!submissionToDelete) {
+            return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+        }
+
         await db.delete(submissions).where(eq(submissions.id, submissionId));
+
+        // Update stats
+        await db.update(exams)
+            .set({ totalSubmissions: sql`${exams.totalSubmissions} - 1` })
+            .where(eq(exams.id, submissionToDelete.examId));
+
+        await db.update(shifts)
+            .set({ candidateCount: sql`${shifts.candidateCount} - 1` })
+            .where(eq(shifts.id, submissionToDelete.shiftId));
 
         return NextResponse.json({ success: true });
     } catch (error) {
