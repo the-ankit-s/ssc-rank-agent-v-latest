@@ -254,6 +254,13 @@ export async function normalizeScores(jobId: number, metadata?: any) {
 
         await ctx.incrementProcessed(examSubsProcessed);
         await ctx.updateProgress(subPct(6, 6), `Exam ${examId}: Done — ${examSubsProcessed} submissions normalized`);
+
+        // Stamp normalization tracking so incremental system knows when this ran
+        const [{ c: currentTotal }] = await db.select({ c: count() }).from(submissions).where(eq(submissions.examId, examId));
+        await db.update(exams).set({
+            lastNormalizedAt: new Date(),
+            subsAtLastNormalization: currentTotal,
+        }).where(eq(exams.id, examId));
     }
 
     await ctx.updateProgress(100, `Normalization complete for ${examIds.length} exam(s), ${totalSubs} submissions`);

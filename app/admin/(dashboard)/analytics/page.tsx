@@ -10,7 +10,7 @@ import {
     Activity, Calendar, Clock, ArrowUpRight, ArrowDownRight, Minus,
     LayoutDashboard, Upload, GraduationCap, Gauge, Crosshair, Sigma, AlertTriangle, Info
 } from "lucide-react";
-import { useAnalytics } from "@/hooks/admin/use-analytics";
+import { useSuspenseAnalytics } from "@/hooks/admin/use-analytics";
 
 const C = ["#6366f1", "#22c55e", "#f43f5e", "#3b82f6", "#eab308", "#ef4444", "#14b8a6", "#8b5cf6", "#f97316", "#06b6d4"];
 const tabs = [
@@ -71,12 +71,7 @@ function ExamHint() {
         <p className="text-[11px] text-blue-600">Select a specific exam above to see score-based metrics. Mixing scores across exams with different scales produces misleading statistics.</p>
     </div>);
 }
-function Skeleton() {
-    return (<div className="space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">{[1, 2, 3, 4].map(i => <div key={i} className="bg-white rounded-xl border border-gray-100 p-4"><div className="h-3 w-16 bg-gray-100 rounded animate-pulse mb-3" /><div className="h-6 w-24 bg-gray-100 rounded animate-pulse" /></div>)}</div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">{[1, 2].map(i => <div key={i} className="bg-white rounded-xl border border-gray-100 p-5"><div className="h-4 w-28 bg-gray-100 rounded animate-pulse mb-6" /><div className="h-48 bg-gray-50 rounded-lg animate-pulse" /></div>)}</div>
-    </div>);
-}
+
 
 export default function AnalyticsPage() {
     const [tab, setTab] = useState("overview");
@@ -86,10 +81,12 @@ export default function AnalyticsPage() {
     const [examId, setExamId] = useState<number | null>(null);
     const [autoRefresh, setAutoRefresh] = useState(false);
 
-    // React Query hooks
-    const { data, isLoading: loading, dataUpdatedAt, refetch } = useAnalytics({
+    // React Query hooks - Suspense version
+    // Data is guaranteed to be available
+    const { data, dataUpdatedAt, refetch } = useSuspenseAnalytics({
         tab, range, examId, customFrom, customTo, autoRefresh,
     });
+
     const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
     const examList = data?.examList || [];
 
@@ -157,13 +154,12 @@ export default function AnalyticsPage() {
                 </div>
             </div>
 
-            {loading ? <Skeleton /> : <>
-                {tab === "overview" && data && <OverviewTab d={data} />}
-                {tab === "submissions" && data && <SubmissionsTab d={data} />}
-                {tab === "exams" && data && <ExamsTab d={data} />}
-                {tab === "scores" && data && <ScoresTab d={data} />}
-                {tab === "users" && data && <UsersTab d={data} />}
-            </>}
+            {/* Suspense Content - No explicit loading check needed */}
+            {tab === "overview" && <OverviewTab d={data} />}
+            {tab === "submissions" && <SubmissionsTab d={data} />}
+            {tab === "exams" && <ExamsTab d={data} />}
+            {tab === "scores" && <ScoresTab d={data} />}
+            {tab === "users" && <UsersTab d={data} />}
         </div>
     );
 }

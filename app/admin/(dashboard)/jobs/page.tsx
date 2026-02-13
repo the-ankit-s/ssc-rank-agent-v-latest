@@ -126,32 +126,29 @@ function PipelineStep({ step, index, total, onRun, running, disabled }: {
                         )}
 
                         {/* Action button */}
-                        {!isLocked && !isDone && (
+                        {!isLocked && (
                             <button onClick={onRun} disabled={running || disabled}
                                 className={cn(
                                     "mt-2.5 flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-lg transition-all disabled:opacity-50",
                                     isRunning
                                         ? "bg-blue-100 text-blue-700 cursor-not-allowed"
-                                        : "bg-gray-900 text-white hover:bg-gray-800"
+                                        : isDone
+                                            ? "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:text-gray-900 shadow-sm"
+                                            : "bg-gray-900 text-white hover:bg-gray-800"
                                 )}>
                                 {isRunning ? (
                                     <><RefreshCw className="w-3 h-3 animate-spin" />Running…</>
                                 ) : (
-                                    <><Play className="w-3 h-3" />Run {step.label}</>
+                                    <><Play className="w-3 h-3" />{isDone ? `Re-run ${step.label}` : `Run ${step.label}`}</>
                                 )}
                             </button>
-                        )}
-
-                        {isDone && (
-                            <span className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600">
-                                <Check className="w-3 h-3" />Completed
-                            </span>
                         )}
                     </div>
                 </div>
             </div>
 
             {/* Connector arrow */}
+
             {index < total - 1 && (
                 <div className="flex items-center px-1.5 flex-shrink-0">
                     <ArrowRight className={cn("w-4 h-4", isDone ? "text-emerald-400" : "text-gray-200")} />
@@ -172,6 +169,19 @@ export default function JobsPage() {
     const [showAddSchedule, setShowAddSchedule] = useState(false);
     const [scheduleForm, setScheduleForm] = useState({ jobType: "rank_calculation", examId: "", cronExpression: "0 2 * * *", name: "" });
 
+    // Batch Processing State
+    const [batchSettings, setBatchSettings] = useState<Record<string, any>>({
+        batch_norm_mode: "both",
+        batch_norm_schedule: "0 2 * * *",
+        batch_norm_min_submissions: 50,
+        batch_norm_time_window: { start: "00:00", end: "06:00" },
+        batch_norm_enabled: true,
+    });
+    const [pendingCount, setPendingCount] = useState(0);
+    const [batchRunning, setBatchRunning] = useState(false);
+    const [batchSaving, setBatchSaving] = useState(false);
+    const [lastBatchRun, setLastBatchRun] = useState<string | null>(null);
+
     // Queries
     const { data: jobsData, isLoading: jobsLoading } = useJobs({ page, limit: 25, ...filters });
     const { data: activeJobs } = useActiveJobs();
@@ -186,6 +196,63 @@ export default function JobsPage() {
     // Fetch exams list
     const { data: examsRaw } = useExamOptions();
     const exams = examsRaw || [];
+
+    // Fetch batch settings on mount
+    useEffect(() => {
+        fetch("/api/admin/batch-settings")
+            .then(r => r.json())
+            .then(d => { if (d.settings) setBatchSettings(d.settings); })
+            .catch(() => { });
+
+        // Fetch pending count
+        fetch("/api/result/pending-count")
+            .then(r => r.json())
+            .then(d => setPendingCount(d.count || 0))
+            .catch(() => { });
+    }, []);
+
+    // Batch handlers
+    const saveBatchSettings = async () => {
+        setBatchSaving(true);
+        try {
+            const res = await fetch("/api/admin/batch-settings", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ settings: batchSettings }),
+            });
+            const data = await res.json();
+            if (data.settings) setBatchSettings(data.settings);
+            toast.success("Batch settings saved");
+        } catch {
+            toast.error("Failed to save settings");
+        } finally {
+            setBatchSaving(false);
+        }
+    };
+
+    const triggerBatchNow = async () => {
+        if (!confirm("Run batch processing now for all pending submissions?")) return;
+        setBatchRunning(true);
+        try {
+            const res = await fetch("/api/admin/batch-check", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ force: true }),
+            });
+            const data = await res.json();
+            if (data.triggered) {
+                toast.success(`Batch completed: ${data.result?.totalSubmissions || 0} submissions processed`);
+                setPendingCount(0);
+                setLastBatchRun(new Date().toISOString());
+            } else {
+                toast.info(data.reason || "No pending submissions");
+            }
+        } catch {
+            toast.error("Batch processing failed");
+        } finally {
+            setBatchRunning(false);
+        }
+    };
 
     // Handlers
     const handleTrigger = (type: string, examId?: number) => {
@@ -389,6 +456,141 @@ export default function JobsPage() {
                                 </div>
                             </>
                         ) : null}
+                    </div>
+                </div>
+
+                {/* ═══════ Batch Processing Controls ═══════ */}
+                <div className="space-y-3">
+                    <h2 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                        <Timer className="w-3 h-3" /> Batch Processing
+                    </h2>
+
+                    <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+                        {/* Live Status Banner */}
+                        <div className={cn(
+                            "px-5 py-3.5 flex items-center justify-between border-b",
+                            batchRunning ? "bg-red-50 border-red-200" :
+                                pendingCount > 0 ? "bg-amber-50 border-amber-200" :
+                                    "bg-emerald-50 border-emerald-200"
+                        )}>
+                            <div className="flex items-center gap-3">
+                                <div className={cn("w-2.5 h-2.5 rounded-full",
+                                    batchRunning ? "bg-red-500 animate-pulse" :
+                                        pendingCount > 0 ? "bg-amber-500" : "bg-emerald-500"
+                                )} />
+                                <span className="text-xs font-bold text-gray-800">
+                                    {batchRunning ? (
+                                        <>Batch running — processing submissions...</>
+                                    ) : pendingCount > 0 ? (
+                                        <>{pendingCount} submissions queued — next: {cronPresets[batchSettings.batch_norm_schedule] || batchSettings.batch_norm_schedule}</>
+                                    ) : (
+                                        <>All caught up — 0 pending submissions</>
+                                    )}
+                                </span>
+                            </div>
+                            <button onClick={triggerBatchNow} disabled={batchRunning || pendingCount === 0}
+                                className={cn(
+                                    "flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-lg transition-all disabled:opacity-40",
+                                    batchRunning ? "bg-red-100 text-red-700 cursor-not-allowed" :
+                                        "bg-gray-900 text-white hover:bg-gray-800"
+                                )}>
+                                {batchRunning ? (
+                                    <><RefreshCw className="w-3 h-3 animate-spin" />Running...</>
+                                ) : (
+                                    <><Play className="w-3 h-3" />Run Batch Now</>
+                                )}
+                            </button>
+                        </div>
+
+                        {/* Settings Grid */}
+                        <div className="p-5 space-y-5">
+                            {/* Row 1: Mode + Enable */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider block mb-1.5">Trigger Mode</label>
+                                    <select value={batchSettings.batch_norm_mode}
+                                        onChange={e => setBatchSettings(s => ({ ...s, batch_norm_mode: e.target.value }))}
+                                        className={inputCls}>
+                                        <option value="scheduled">Scheduled Only</option>
+                                        <option value="threshold">Threshold Only</option>
+                                        <option value="both">Both (whichever fires first)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider block mb-1.5">Schedule</label>
+                                    <select value={batchSettings.batch_norm_schedule}
+                                        onChange={e => setBatchSettings(s => ({ ...s, batch_norm_schedule: e.target.value }))}
+                                        className={inputCls}>
+                                        {Object.entries(cronPresets).map(([cron, label]) => (
+                                            <option key={cron} value={cron}>{label}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider block mb-1.5">
+                                        Min Submissions Threshold
+                                    </label>
+                                    <div className="flex items-center gap-2">
+                                        <input type="range" min={10} max={500} step={10}
+                                            value={batchSettings.batch_norm_min_submissions}
+                                            onChange={e => setBatchSettings(s => ({ ...s, batch_norm_min_submissions: parseInt(e.target.value) }))}
+                                            className="flex-1 h-2 accent-indigo-600" />
+                                        <span className="text-xs font-bold text-gray-700 min-w-[2.5rem] text-right">
+                                            {batchSettings.batch_norm_min_submissions}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Row 2: Time Window + Kill Switch */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider block mb-1.5">Window Start</label>
+                                    <input type="time"
+                                        value={batchSettings.batch_norm_time_window?.start || "00:00"}
+                                        onChange={e => setBatchSettings(s => ({
+                                            ...s, batch_norm_time_window: { ...s.batch_norm_time_window, start: e.target.value }
+                                        }))}
+                                        className={inputCls} />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider block mb-1.5">Window End</label>
+                                    <input type="time"
+                                        value={batchSettings.batch_norm_time_window?.end || "06:00"}
+                                        onChange={e => setBatchSettings(s => ({
+                                            ...s, batch_norm_time_window: { ...s.batch_norm_time_window, end: e.target.value }
+                                        }))}
+                                        className={inputCls} />
+                                </div>
+                                <div className="flex items-end gap-3">
+                                    <button onClick={() => setBatchSettings(s => ({ ...s, batch_norm_enabled: !s.batch_norm_enabled }))}
+                                        className={cn(
+                                            "relative inline-flex h-6 w-11 items-center rounded-full transition-colors border",
+                                            batchSettings.batch_norm_enabled ? "bg-indigo-600 border-indigo-700" : "bg-gray-200 border-gray-300"
+                                        )}>
+                                        <span className={cn(
+                                            "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
+                                            batchSettings.batch_norm_enabled ? "translate-x-6" : "translate-x-1"
+                                        )} />
+                                    </button>
+                                    <span className="text-xs font-semibold text-gray-600">
+                                        {batchSettings.batch_norm_enabled ? "Enabled" : "Disabled"}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Save Button */}
+                            <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                                <p className="text-[10px] text-gray-400 font-medium">
+                                    ⚡ Safety net: Weekly batch runs every Sunday 2 AM even if disabled
+                                </p>
+                                <button onClick={saveBatchSettings} disabled={batchSaving}
+                                    className="flex items-center gap-1.5 px-4 py-2 text-[11px] font-bold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50">
+                                    {batchSaving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                                    Save Settings
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

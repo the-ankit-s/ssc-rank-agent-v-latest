@@ -88,6 +88,29 @@ export function useErrors(
     });
 }
 
+/** Error stats selector (minimized re-renders). */
+export function useErrorStats(filters: { status: string; component: string; search: string }) {
+    return useQuery({
+        queryKey: ["admin", "errors", { filters, page: 1 }], // Reuses same key/fetch as main list if active
+        queryFn: async () => {
+            // We fetch page 1 to get metadata stats if API supports it, or just count meaningful items from current view
+            const params = new URLSearchParams({ page: "1", limit: "50", ...filters });
+            const res = await fetch(`/api/admin/errors?${params}`);
+            if (!res.ok) throw new Error("Failed to fetch errors");
+            return res.json() as Promise<{ data: ErrorGroup[]; meta: any }>;
+        },
+        select: (data) => {
+            // Calculate stats from the fetched page (or ideally API would return stats in meta)
+            const stats = { critical: 0, high: 0, medium: 0, low: 0 };
+            data.data.forEach(e => {
+                if (e.severity in stats) stats[e.severity as keyof typeof stats]++;
+            });
+            return stats;
+        },
+        staleTime: 10000,
+    });
+}
+
 /** Single error detail with instances. */
 export function useErrorDetail(id: number | null) {
     return useQuery({

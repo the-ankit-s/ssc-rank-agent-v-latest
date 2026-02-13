@@ -216,7 +216,7 @@ export default function SubmissionsPage() {
                                                 <span className="inline-block px-2 py-0.5 bg-gray-50 text-gray-500 text-[10px] font-bold border border-gray-100 rounded-md">{submission.shiftCode}</span>
                                             </td>
                                             <td className="p-3"><CategoryBadge category={submission.category} /></td>
-                                            <td className="p-3"><ScoreIndicator score={submission.rawScore} examTotal={submission.examTotal} size="md" /></td>
+                                            <td className="p-3"><ScoreIndicator score={submission.rawScore} examTotal={submission.examTotal} size="sm" /></td>
                                             <td className="p-3">
                                                 {submission.normalizedScore !== null ? <span className="font-bold text-sm text-gray-900">{submission.normalizedScore.toFixed(2)}</span> : <span className="text-gray-300 text-xs">—</span>}
                                             </td>

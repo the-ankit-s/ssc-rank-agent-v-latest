@@ -5,6 +5,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { parseSSC } from "@/lib/parser";
 import { ExamResult } from "@/lib/parser/types";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 import crypto from "crypto";
 
@@ -14,6 +15,25 @@ function hashString(str: string): string {
 
 export async function POST(request: NextRequest) {
     try {
+        // ── 0. RATE LIMIT ───────────────────────────────────────────
+        const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+            || request.headers.get("x-real-ip")
+            || "unknown";
+
+        const rateCheck = checkRateLimit(ip);
+        if (!rateCheck.allowed) {
+            return NextResponse.json(
+                {
+                    error: "Too many submissions. Please try again later.",
+                    retryAfter: rateCheck.retryAfter,
+                },
+                {
+                    status: 429,
+                    headers: { "Retry-After": String(rateCheck.retryAfter) },
+                }
+            );
+        }
+
         const body = await request.json();
         const { url, category, exam: examSlug } = body;
 
@@ -25,7 +45,7 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Get the exam by slug
+        // ── 1. GET EXAM ─────────────────────────────────────────────
         const [examData] = await db
             .select()
             .from(exams)
@@ -39,7 +59,7 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // 1. FETCH HTML
+        // ── 2. FETCH HTML ───────────────────────────────────────────
         let html = "";
         try {
             const response = await fetch(url);
@@ -53,8 +73,7 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // 2. PARSE DATA
-        // 2. PARSE DATA
+        // ── 3. PARSE DATA ───────────────────────────────────────────
         let parsedResult: ExamResult;
         try {
             parsedResult = parseSSC(html, (examData.tier as any) || "tier2");
@@ -72,47 +91,34 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const { metadata, sectionPerformance, scoreWithoutComputer, scoreWithComputer } = parsedResult;
+        const { metadata, sectionPerformance, scoreWithoutComputer } = parsedResult;
 
-        // 3. FIND/CREATE SHIFT
-        // Format date/time from metadata to match DB expected format
-        // Metadata example: "Exam Date": "26/10/2023", "Exam Time": "9:00 AM - 11:00 AM"
-
+        // ── 4. FIND/CREATE SHIFT ────────────────────────────────────
         let shiftId = null;
         if (metadata["Exam Date"] && metadata["Exam Time"]) {
-            // Convert DD/MM/YYYY to YYYY-MM-DD
             const [day, month, year] = metadata["Exam Date"].split("/");
-            const isoDate = `${year}-${month}-${day}`; // ISO String for DB comparison if needed, or keeping logic simple
+            const isoDate = `${year}-${month}-${day}`;
 
-            // Try to find existing shift
-            // We use a simplified check here. In a real app, strict date parsing is needed.
-            // For now, we will try to match based on date string or create new.
-
-            // Note: simple string matching for 'date' column which is text in our schema
             const existingShift = await db.query.shifts.findFirst({
                 where: and(
                     eq(shifts.examId, examData.id),
                     eq(shifts.date, new Date(isoDate).toISOString())
-                    // We stored date as ISO string in Phase 5 fix. 
-                    // Let's ensure consistency.
                 )
             });
 
             if (existingShift) {
                 shiftId = existingShift.id;
             } else {
-                // Create new shift if not found (Auto-discovery)
                 const [newShift] = await db.insert(shifts).values({
                     examId: examData.id,
                     date: new Date(isoDate).toISOString(),
-                    shiftNumber: 1, // Defaulting to 1 as we can't easily infer without more logic/inputs
+                    shiftNumber: 1,
                     shiftCode: `${year}${month}${day}_${metadata["Exam Time"].substring(0, 2)}`,
                     timeSlot: metadata["Exam Time"],
                     candidateCount: 0
                 }).returning();
                 shiftId = newShift.id;
 
-                // Update total shifts count for the exam
                 await db.update(exams)
                     .set({ totalShifts: sql`${exams.totalShifts} + 1` })
                     .where(eq(exams.id, examData.id));
@@ -120,7 +126,6 @@ export async function POST(request: NextRequest) {
         }
 
         if (!shiftId) {
-            // Fallback to a random shift if parsing failed (should not happen with valid key)
             const [fallbackShift] = await db
                 .select()
                 .from(shifts)
@@ -133,11 +138,9 @@ export async function POST(request: NextRequest) {
             }
         }
 
-
-        // 4. CHECK DUPLICATE
-        // We use Roll Number + Exam ID as unique constraint
+        // ── 5. CHECK DUPLICATE ──────────────────────────────────────
         const rollNumber = metadata["Roll Number"] || `UNKNOWN-${nanoid(6)}`;
-        const rollNumberHash = hashString(rollNumber); // Simple hash for privacy if needed, though we store actual roll too
+        const rollNumberHash = hashString(rollNumber);
 
         const [existing] = await db
             .select()
@@ -156,18 +159,12 @@ export async function POST(request: NextRequest) {
                 submissionId: existing.id,
                 rawScore: existing.rawScore,
                 normalizedScore: existing.normalizedScore,
+                status: existing.processingStatus || "ready",
                 message: "Submission already exists",
             });
         }
 
-        // 5. NORMALIZATION LOGIC (Simplified)
-        // In reality, this requires the shift's stats.
-        const [shiftStats] = await db.select().from(shifts).where(eq(shifts.id, shiftId));
-        const normalizationFactor = shiftStats?.normalizationFactor || 1.0;
-        const normalizedScore = scoreWithoutComputer * normalizationFactor;
-
-        // 6. SAVE SUBMISSION
-        // Map parser section result to DB schema
+        // ── 6. INSERT SUBMISSION (fast-path: no normalization) ──────
         const dbSectionPerformance: Record<string, any> = {};
         Object.entries(sectionPerformance).forEach(([name, data]) => {
             dbSectionPerformance[name] = {
@@ -199,31 +196,17 @@ export async function POST(request: NextRequest) {
             totalWrong,
             accuracy,
             rawScore: scoreWithoutComputer,
-            normalizedScore,
+            // normalizedScore: null — filled by batch job
+            // overallRank: null — filled by batch job
+            processingStatus: "pending",
             source: "url_parser",
             sourceUrl: url,
             urlHash: hashString(url),
             examCentre: metadata["Venue Name"],
+            submitterIp: ip,
         }).returning();
 
-        // 7. CALCULATE RANK
-        const [rankResult] = await db
-            .select({
-                rank: sql<number>`count(*) + 1`,
-            })
-            .from(submissions)
-            .where(
-                and(
-                    eq(submissions.examId, examData.id),
-                    sql`${submissions.normalizedScore} > ${normalizedScore}`
-                )
-            );
-
-        await db.update(submissions)
-            .set({ overallRank: rankResult?.rank || 1 })
-            .where(eq(submissions.id, newSubmission.id));
-
-        // Update stats
+        // ── 7. UPDATE COUNTERS (lightweight) ────────────────────────
         await db.update(exams)
             .set({
                 totalSubmissions: sql`${exams.totalSubmissions} + 1`,
@@ -235,13 +218,17 @@ export async function POST(request: NextRequest) {
             .set({ candidateCount: sql`${shifts.candidateCount} + 1` })
             .where(eq(shifts.id, shiftId));
 
+        // ── 8. RETURN IMMEDIATELY ───────────────────────────────────
+        // NO normalization, NO ranking — those happen in batch jobs.
         return NextResponse.json({
             success: true,
             submissionId: newSubmission.id,
             rawScore: scoreWithoutComputer,
-            normalizedScore,
-            rank: rankResult?.rank || 1,
-            candidateName: metadata["Candidate Name"]
+            normalizedScore: null,
+            rank: null,
+            status: "pending",
+            candidateName: metadata["Candidate Name"],
+            message: "Submission received. Normalization and ranking will be processed in the next batch run.",
         });
 
     } catch (error: any) {
@@ -253,11 +240,10 @@ export async function POST(request: NextRequest) {
                 {
                     success: true,
                     message: "Submission already exists (duplicate detected)",
-                    submissionId: 0, // Client should redirect or handle gracefully
-                    // Ideally we fetch the existing ID here, but for now just prevent 500
+                    submissionId: 0,
                     error: "This answer key has already been submitted."
                 },
-                { status: 409 } // Conflict
+                { status: 409 }
             );
         }
 

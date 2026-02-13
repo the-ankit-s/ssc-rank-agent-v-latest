@@ -49,8 +49,26 @@ export function useActiveJobs() {
             const data = await res.json();
             return (data.jobs || []) as Job[];
         },
-        refetchInterval: 2000, // Poll every 2 seconds
-        refetchIntervalInBackground: false, // Pause when tab is hidden
+        refetchInterval: 2000,
+        refetchIntervalInBackground: false,
+    });
+}
+
+export function useActiveJobStats() {
+    return useQuery({
+        queryKey: ["activeJobs"],
+        queryFn: async () => {
+            const res = await fetch("/api/admin/jobs?status=running&limit=10");
+            if (!res.ok) throw new Error("Failed to fetch active jobs");
+            const data = await res.json();
+            return (data.jobs || []) as Job[];
+        },
+        refetchInterval: 2000,
+        refetchIntervalInBackground: false,
+        select: (jobs) => ({
+            count: jobs.length,
+            processingRate: jobs.reduce((acc, job) => acc + (job.recordsProcessed / (Math.max(1, (Date.now() - new Date(job.startedAt || Date.now()).getTime()) / 1000))), 0)
+        }),
     });
 }
 

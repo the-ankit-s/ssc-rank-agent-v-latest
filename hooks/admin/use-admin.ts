@@ -63,6 +63,18 @@ export interface Settings {
     supportEmail?: string;
     maintenanceMode?: boolean;
     debugLogging?: boolean;
+    // Exam defaults
+    defaultPositive?: number;
+    defaultNegative?: number;
+    allowMultipleSubmissions?: boolean;
+    enableDuplicateDetection?: boolean;
+    autoCalculateRanks?: boolean;
+    // Data pipeline
+    maxRetries?: number;
+    requestTimeout?: number;
+    enableMockParser?: boolean;
+    rankingMethod?: string;
+    percentileMethod?: string;
     [key: string]: any;
 }
 

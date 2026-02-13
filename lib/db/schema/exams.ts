@@ -94,6 +94,11 @@ export const exams = pgTable(
     lastSubmissionAt: timestamp("last_submission_at"),
     viewCount: integer("view_count").default(0),
 
+    // Normalization Tracking
+    lastNormalizedAt: timestamp("last_normalized_at"),
+    subsAtLastNormalization: integer("subs_at_last_normalization").default(0),
+    reNormThreshold: real("re_norm_threshold").default(5), // percentage of new subs to trigger full re-normalization
+
     // Timestamps
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
@@ -251,6 +256,9 @@ export const submissions = pgTable(
     resultShareToken: text("result_share_token").unique(),
     isDisputed: boolean("is_disputed").default(false),
     adminNotes: text("admin_notes"),
+
+    // Processing Status (batch normalization pipeline)
+    processingStatus: text("processing_status").default("pending"), // pending | processing | ready | failed
 
     // Timestamps
     createdAt: timestamp("created_at").defaultNow(),
