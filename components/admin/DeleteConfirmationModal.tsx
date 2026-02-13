@@ -1,6 +1,9 @@
 "use client";
 
-type DeleteConfirmationModalProps = {
+import { Dialog } from "@/components/admin/ui";
+import { AlertTriangle } from "lucide-react";
+
+type Props = {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: () => Promise<void>;
@@ -8,52 +11,22 @@ type DeleteConfirmationModalProps = {
   message: string;
 };
 
-export default function DeleteConfirmationModal({
-  isOpen,
-  onClose,
-  onConfirm,
-  title,
-  message,
-}: DeleteConfirmationModalProps) {
-  if (!isOpen) return null;
-
-  const handleConfirm = async () => {
-    await onConfirm();
-    onClose();
-  };
+export default function DeleteConfirmationModal({ isOpen, onClose, onConfirm, title, message }: Props) {
+  const handleConfirm = async () => { await onConfirm(); onClose(); };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl border-2 border-black shadow-brutal max-w-md w-full">
-        <div className="p-6 space-y-4">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center border-2 border-black">
-              <span className="material-symbols-outlined text-red-600">
-                warning
-              </span>
-            </div>
-            <div>
-              <h2 className="text-xl font-black">{title}</h2>
-              <p className="text-gray-600">{message}</p>
-            </div>
-          </div>
-
-          <div className="flex gap-3 pt-4">
-            <button
-              onClick={onClose}
-              className="flex-1 px-6 py-3 bg-gray-100 font-bold border-2 border-black rounded-lg hover:bg-gray-200 transition-all"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleConfirm}
-              className="flex-1 px-6 py-3 bg-red-600 text-white font-bold border-2 border-black rounded-lg hover:bg-red-700 transition-all"
-            >
-              Delete
-            </button>
-          </div>
+    <Dialog open={isOpen} onClose={onClose}>
+      <div className="p-6">
+        <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center mx-auto mb-4">
+          <AlertTriangle className="w-6 h-6 text-red-600" />
+        </div>
+        <h3 className="text-lg font-black text-gray-900 text-center">{title}</h3>
+        <p className="text-sm text-gray-500 text-center mt-2">{message}</p>
+        <div className="mt-6 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
+          <button onClick={handleConfirm} className="flex-1 py-2.5 bg-red-500 text-white rounded-xl text-sm font-bold hover:bg-red-600 transition-colors">Delete</button>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

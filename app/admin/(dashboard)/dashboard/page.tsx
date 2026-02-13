@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
 import {
     AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
     PieChart, Pie, Cell, BarChart, Bar, Legend
@@ -8,105 +8,37 @@ import {
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
-
-// Types matching API response
-interface DashboardStats {
-    counts: {
-        exams: { total: number; active: number; upcoming: number; closed: number };
-        submissions: { total: number; today: number; thisWeek: number };
-        shifts: number;
-    };
-    trends: {
-        daily: { name: string; submissions: number }[];
-        topExams: { name: string; value: number }[];
-        categories: { name: string; value: number }[];
-    };
-    activity: {
-        id: string;
-        type: 'submission' | 'alert' | 'job' | 'system';
-        user: string;
-        exam: string;
-        time: string;
-        status: string;
-    }[];
-    health: {
-        db: { status: string; latency: number; message: string };
-        api: { status: string; uptime: number; message: string };
-        cache: { status: string; message: string };
-        workers: { status: string; activeJobs: number; failedJobs: number; message: string };
-        lastCheck: string;
-    };
-}
+import { useDashboardStats, useTriggerDashboardJob } from "@/hooks/admin/use-dashboard";
 
 const COLORS = ["#A78BFA", "#F472B6", "#34D399", "#FBBF24", "#60A5FA"];
 
 export default function DashboardPage() {
-    const [data, setData] = useState<DashboardStats | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
-    const [refreshing, setRefreshing] = useState(false);
-
-    const [loadingAction, setLoadingAction] = useState<string | null>(null);
+    const { data, isLoading: loading, isFetching: refreshing, dataUpdatedAt, refetch } = useDashboardStats();
+    const triggerJobMutation = useTriggerDashboardJob();
     const [cooldown, setCooldown] = useState(0);
 
-    const fetchData = useCallback(async () => {
-        try {
-            setRefreshing(true);
-            const res = await fetch("/api/admin/stats");
-            if (!res.ok) throw new Error("Failed to fetch stats");
-            const jsonData = await res.json();
-            setData(jsonData);
-            setLastUpdated(new Date());
-        } catch (error) {
-            console.error("Error fetching dashboard data:", error);
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
-        }
-    }, []);
+    const lastUpdated = new Date(dataUpdatedAt || Date.now());
+    const loadingAction = triggerJobMutation.isPending ? (triggerJobMutation.variables as string) : null;
 
     const handleRefresh = async () => {
         if (cooldown > 0 || refreshing) return;
-
-        await fetchData();
-
-        // Start cooldown
+        await refetch();
         setCooldown(10);
         const timer = setInterval(() => {
             setCooldown((prev) => {
-                if (prev <= 1) {
-                    clearInterval(timer);
-                    return 0;
-                }
+                if (prev <= 1) { clearInterval(timer); return 0; }
                 return prev - 1;
             });
         }, 1000);
     };
 
-    const triggerJob = async (type: string) => {
-        if (loadingAction) return;
-        setLoadingAction(type);
-        try {
-            await fetch("/api/admin/jobs", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ type }),
-            });
-            alert(`Job '${type}' started successfully.`);
-            fetchData(); // Refresh data to show new job status
-        } catch (e) {
-            alert("Failed to trigger job");
-        } finally {
-            setLoadingAction(null);
-        }
+    const triggerJob = (type: string) => {
+        if (triggerJobMutation.isPending) return;
+        triggerJobMutation.mutate(type, {
+            onSuccess: () => alert(`Job '${type}' started successfully.`),
+            onError: () => alert("Failed to trigger job"),
+        });
     };
-
-    // Initial fetch and polling
-    useEffect(() => {
-        fetchData();
-        const interval = setInterval(fetchData, 30000); // 30s auto-refresh
-        return () => clearInterval(interval);
-    }, [fetchData]);
 
     const CustomTooltip = ({ active, payload, label }: any) => {
         if (active && payload && payload.length) {
@@ -122,7 +54,7 @@ export default function DashboardPage() {
         return null;
     };
 
-    if (loading && !data) {
+    if (loading) {
         return (
             <div className="space-y-8 max-w-[1600px] mx-auto pb-10 animate-pulse">
                 {/* Header Skeleton */}

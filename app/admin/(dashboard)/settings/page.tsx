@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { useSettings, useUpdateSettings, Settings } from "@/hooks/admin/use-admin";
+import { toast } from "sonner"; // Assuming sonner is available based on previous context, or use alert fallback
 
 const tabs = [
     { id: "general", label: "General", icon: "tune" },
@@ -12,56 +14,40 @@ const tabs = [
 
 export default function SettingsPage() {
     const [activeTab, setActiveTab] = useState("general");
-    const [settings, setSettings] = useState<Record<string, any>>({});
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
+    const [settings, setSettings] = useState<Settings>({});
 
+    // Queries & Mutations
+    const { data, isLoading } = useSettings();
+    const updateSettings = useUpdateSettings();
+
+    // Sync remote data to local state for editing
     useEffect(() => {
-        fetch("/api/admin/settings")
-            .then((res) => res.json())
-            .then((data) => {
-                setSettings(data.settings || {});
-                setLoading(false);
-            })
-            .catch((err) => {
-                console.error(err);
-                setLoading(false);
-            });
-    }, []);
-
-    const handleSave = async () => {
-        setSaving(true);
-        try {
-            const res = await fetch("/api/admin/settings", {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ settings }),
-            });
-            if (res.ok) {
-                alert("Settings saved successfully!");
-            } else {
-                alert("Failed to save settings.");
-            }
-        } catch (error) {
-            console.error(error);
-            alert("Error saving settings.");
-        } finally {
-            setSaving(false);
+        if (data) {
+            setSettings(data);
         }
+    }, [data]);
+
+    const handleSave = () => {
+        const promise = updateSettings.mutateAsync(settings);
+        toast.promise(promise, {
+            loading: "Saving settings...",
+            success: "Settings saved successfully!",
+            error: "Failed to save settings.",
+        });
     };
 
     const handleChange = (key: string, value: any) => {
         setSettings((prev) => ({ ...prev, [key]: value }));
     };
 
-    if (loading) return (
+    if (isLoading) return (
         <div className="flex items-center justify-center min-h-[400px]">
             <span className="material-symbols-outlined text-black text-6xl animate-spin">rotate_right</span>
         </div>
     );
 
     return (
-        <div className="space-y-8 max-w-[1600px] mx-auto">
+        <div className="space-y-8 max-w-[1600px] mx-auto pb-20">
             <div>
                 <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Settings</h1>
                 <p className="text-gray-500 font-medium mt-1">Manage system preferences.</p>
@@ -103,8 +89,9 @@ export default function SettingsPage() {
                                         <label className="text-xs font-bold text-gray-500 uppercase tracking-wide">Organization Name</label>
                                         <input
                                             type="text"
-                                            value={settings.orgName || "RankMitra"}
+                                            value={settings.orgName || ""}
                                             onChange={(e) => handleChange("orgName", e.target.value)}
+                                            placeholder="RankMitra"
                                             className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-lg text-gray-900 font-bold focus:outline-none focus:border-[#A78BFA] focus:bg-white focus:shadow-sm transition-all placeholder:text-gray-400"
                                         />
                                     </div>
@@ -112,8 +99,9 @@ export default function SettingsPage() {
                                         <label className="text-xs font-bold text-gray-500 uppercase tracking-wide">Support Email</label>
                                         <input
                                             type="email"
-                                            value={settings.supportEmail || "support@rankmitra.com"}
+                                            value={settings.supportEmail || ""}
                                             onChange={(e) => handleChange("supportEmail", e.target.value)}
+                                            placeholder="support@rankmitra.com"
                                             className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-lg text-gray-900 font-bold focus:outline-none focus:border-[#A78BFA] focus:bg-white focus:shadow-sm transition-all placeholder:text-gray-400"
                                         />
                                     </div>
@@ -160,10 +148,11 @@ export default function SettingsPage() {
                             <div className="pt-6 flex justify-end">
                                 <button
                                     onClick={handleSave}
-                                    disabled={saving}
-                                    className="px-6 py-3 bg-[#A78BFA] text-gray-900 font-bold rounded-xl border-2 border-gray-900 shadow-neo hover:shadow-neo-hover hover:-translate-y-1 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    disabled={updateSettings.isPending}
+                                    className="px-6 py-3 bg-[#A78BFA] text-gray-900 font-bold rounded-xl border-2 border-gray-900 shadow-neo hover:shadow-neo-hover hover:-translate-y-1 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                                 >
-                                    {saving ? "Saving..." : "Save Changes"}
+                                    {updateSettings.isPending && <span className="material-symbols-outlined animate-spin text-sm">rotate_right</span>}
+                                    {updateSettings.isPending ? "Saving..." : "Save Changes"}
                                 </button>
                             </div>
                         </div>

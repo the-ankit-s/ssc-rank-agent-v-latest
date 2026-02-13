@@ -1,739 +1,555 @@
 "use client";
-
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import {
     AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line,
     XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ComposedChart,
 } from "recharts";
+import {
+    BarChart3, TrendingUp, Users, Target, Award, MapPin, RefreshCw, Download,
+    Activity, Calendar, Clock, ArrowUpRight, ArrowDownRight, Minus,
+    LayoutDashboard, Upload, GraduationCap, Gauge, Crosshair, Sigma, AlertTriangle, Info
+} from "lucide-react";
+import { useAnalytics } from "@/hooks/admin/use-analytics";
 
-const COLORS = ["#A78BFA", "#34D399", "#F472B6", "#60A5FA", "#FBBF24", "#F87171", "#6EE7B7", "#93C5FD", "#FCA5A1", "#C4B5FD"];
-
+const C = ["#6366f1", "#22c55e", "#f43f5e", "#3b82f6", "#eab308", "#ef4444", "#14b8a6", "#8b5cf6", "#f97316", "#06b6d4"];
 const tabs = [
-    { key: "overview", label: "Overview", icon: "dashboard" },
-    { key: "submissions", label: "Submissions", icon: "upload_file" },
-    { key: "exams", label: "Exams", icon: "quiz" },
-    { key: "scores", label: "Scores", icon: "score" },
-    { key: "users", label: "Users", icon: "group" },
+    { key: "overview", label: "Overview", icon: LayoutDashboard },
+    { key: "submissions", label: "Submissions", icon: Upload },
+    { key: "exams", label: "Exams", icon: GraduationCap },
+    { key: "scores", label: "Scores", icon: Gauge },
+    { key: "users", label: "Demographics", icon: Users },
 ];
-
-const dateRanges = [
-    { key: "all", label: "All Time" },
-    { key: "7d", label: "7 Days" },
-    { key: "30d", label: "30 Days" },
-    { key: "90d", label: "90 Days" },
-    { key: "this_month", label: "This Month" },
-    { key: "last_month", label: "Last Month" },
+const ranges = [
+    { key: "all", label: "All Time" }, { key: "7d", label: "7D" }, { key: "30d", label: "30D" },
+    { key: "90d", label: "90D" }, { key: "this_month", label: "This Mo" }, { key: "last_month", label: "Last Mo" },
     { key: "custom", label: "Custom" },
 ];
+
+// ── Shared primitives ──
+function Tip({ active, payload, label }: any) {
+    if (!active || !payload?.length) return null;
+    return (<div className="bg-white border border-gray-200 rounded-lg p-2.5 shadow-lg text-xs">
+        <p className="font-bold text-gray-800 mb-1">{label}</p>
+        {payload.map((p: any, i: number) => (
+            <p key={i} className="text-gray-600"><span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ backgroundColor: p.color }} />{p.name}: <b className="text-gray-900">{typeof p.value === "number" ? p.value.toLocaleString() : p.value}</b></p>
+        ))}
+    </div>);
+}
+function Kpi({ label, value, delta, icon: I, color, bg }: any) {
+    return (<div className="bg-white rounded-xl border border-gray-100 p-4 flex items-start gap-3">
+        <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5", bg)}><I className={cn("w-4 h-4", color)} /></div>
+        <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{label}</p>
+            <div className="flex items-baseline gap-2">
+                <p className="text-lg font-bold text-gray-900">{typeof value === "number" ? value.toLocaleString() : value}</p>
+                {delta !== undefined && delta !== null && <span className={cn("text-[10px] font-bold", delta > 0 ? "text-emerald-500" : delta < 0 ? "text-red-500" : "text-gray-400")}>{delta > 0 ? "+" : ""}{delta}%</span>}
+            </div>
+        </div>
+    </div>);
+}
+function Card({ title, sub, children, className }: { title: string; sub?: string; children: React.ReactNode; className?: string }) {
+    return (<div className={cn("bg-white rounded-xl border border-gray-100 p-5", className)}>
+        <div className="mb-4"><h3 className="text-sm font-bold text-gray-800">{title}</h3>{sub && <p className="text-[11px] text-gray-400 mt-0.5">{sub}</p>}</div>
+        {children}
+    </div>);
+}
+function Empty({ msg }: { msg: string }) {
+    return (<div className="bg-white rounded-xl border border-gray-100 p-10 text-center">
+        <BarChart3 className="w-8 h-8 text-gray-200 mx-auto mb-2" /><p className="text-xs font-semibold text-gray-400">{msg}</p>
+    </div>);
+}
+function Warning({ msg }: { msg: string }) {
+    return (<div className="bg-amber-50 border border-amber-200 rounded-xl p-5 flex items-start gap-3">
+        <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+        <div><p className="text-sm font-semibold text-amber-800">Exam Selection Required</p><p className="text-xs text-amber-600 mt-1">{msg}</p></div>
+    </div>);
+}
+function ExamHint() {
+    return (<div className="bg-blue-50 border border-blue-100 rounded-lg p-3 flex items-start gap-2">
+        <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+        <p className="text-[11px] text-blue-600">Select a specific exam above to see score-based metrics. Mixing scores across exams with different scales produces misleading statistics.</p>
+    </div>);
+}
+function Skeleton() {
+    return (<div className="space-y-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">{[1, 2, 3, 4].map(i => <div key={i} className="bg-white rounded-xl border border-gray-100 p-4"><div className="h-3 w-16 bg-gray-100 rounded animate-pulse mb-3" /><div className="h-6 w-24 bg-gray-100 rounded animate-pulse" /></div>)}</div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">{[1, 2].map(i => <div key={i} className="bg-white rounded-xl border border-gray-100 p-5"><div className="h-4 w-28 bg-gray-100 rounded animate-pulse mb-6" /><div className="h-48 bg-gray-50 rounded-lg animate-pulse" /></div>)}</div>
+    </div>);
+}
 
 export default function AnalyticsPage() {
     const [tab, setTab] = useState("overview");
     const [range, setRange] = useState("all");
     const [customFrom, setCustomFrom] = useState("");
     const [customTo, setCustomTo] = useState("");
-    const [data, setData] = useState<any>(null);
-    const [loading, setLoading] = useState(true);
+    const [examId, setExamId] = useState<number | null>(null);
     const [autoRefresh, setAutoRefresh] = useState(false);
-    const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-    const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-    const fetchData = useCallback(async () => {
-        setLoading(true);
-        try {
-            let url = `/api/admin/analytics?tab=${tab}&range=${range}`;
-            if (range === "custom" && customFrom && customTo) {
-                url += `&from=${customFrom}&to=${customTo}`;
-            }
-            const res = await fetch(url);
-            const json = await res.json();
-            setData(json);
-            setLastUpdated(new Date());
-        } catch (e) {
-            console.error(e);
-        } finally {
-            setLoading(false);
-        }
-    }, [tab, range, customFrom, customTo]);
+    // React Query hooks
+    const { data, isLoading: loading, dataUpdatedAt, refetch } = useAnalytics({
+        tab, range, examId, customFrom, customTo, autoRefresh,
+    });
+    const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
+    const examList = data?.examList || [];
 
-    useEffect(() => { fetchData(); }, [fetchData]);
-
-    useEffect(() => {
-        if (autoRefresh) {
-            intervalRef.current = setInterval(fetchData, 60000);
-        }
-        return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-    }, [autoRefresh, fetchData]);
+    const selectedExamName = examId ? examList.find((e: any) => e.id === examId)?.name : null;
 
     const exportCSV = () => {
         if (!data) return;
-        let csv = "";
-        const filename = `analytics_${tab}_${range}.csv`;
-        if (tab === "overview") {
-            const k = data.kpis;
-            csv = "Metric,Value,Previous,Change %\n";
-            csv += `Submissions,${k?.submissions?.value},${k?.submissions?.prev},${k?.submissions?.delta}%\n`;
-            csv += `Avg Score,${k?.avgScore?.value},${k?.avgScore?.prev},${k?.avgScore?.delta}%\n`;
-            csv += `Avg Accuracy,${k?.avgAccuracy?.value},${k?.avgAccuracy?.prev},${k?.avgAccuracy?.delta}%\n`;
-            csv += `Active Exams,${k?.activeExams?.value},${k?.activeExams?.prev},${k?.activeExams?.delta}%\n`;
-        } else if (tab === "submissions") {
-            csv = "Date,Count\n" + (data.dailyTrend || []).map((r: any) => `${r.date},${r.count}`).join("\n");
-        } else if (tab === "exams") {
-            csv = "Exam,Agency,Submissions,Avg Score\n" + (data.perExam || []).map((r: any) => `"${r.examName}",${r.agency},${r.count},${r.avgScore}`).join("\n");
-        } else if (tab === "scores") {
-            csv = "Range,Count\n" + (data.scoreDistribution || []).map((r: any) => `${r.bucket},${r.count}`).join("\n");
-        } else if (tab === "users") {
-            csv = "State,Count\n" + (data.stateDist || []).map((r: any) => `"${r.state}",${r.count}`).join("\n");
-        }
-        const blob = new Blob([csv], { type: "text/csv" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url; a.download = filename; a.click();
-        URL.revokeObjectURL(url);
+        let csv = ""; const fn = `analytics_${tab}_${range}${examId ? `_exam${examId}` : ""}.csv`;
+        if (tab === "overview") { const k = data.kpis; csv = "Metric,Value\nSubmissions," + k?.submissions?.value; if (k?.avgScore) csv += "\nAvg Score," + k.avgScore.value; if (k?.avgAccuracy) csv += "\nAvg Accuracy," + k.avgAccuracy.value + "%"; }
+        else if (tab === "submissions") csv = "Date,Count\n" + (data.dailyTrend || []).map((r: any) => `${r.date},${r.count}`).join("\n");
+        else if (tab === "exams") csv = "Exam,Agency,Count,Avg Score,Max Score,Accuracy\n" + (data.perExam || []).map((r: any) => `"${r.examName}",${r.agency},${r.count},${r.avgScore},${r.maxScore},${r.avgAccuracy}%`).join("\n");
+        else if (tab === "scores") csv = "Range,Count\n" + (data.scoreDistribution || []).map((r: any) => `${r.bucket},${r.count}`).join("\n");
+        else if (tab === "users") csv = "State,Count\n" + (data.stateDist || []).map((r: any) => `"${r.state}",${r.count}`).join("\n");
+        const b = new Blob([csv], { type: "text/csv" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = fn; a.click(); URL.revokeObjectURL(u);
     };
 
     return (
-        <div className="space-y-6 max-w-[1600px] mx-auto pb-10">
-            {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="space-y-5 max-w-[1600px] mx-auto pb-20">
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Analytics</h1>
-                    <p className="text-gray-500 font-medium mt-1">
-                        Platform-wide insights and reporting
-                        {lastUpdated && <span className="text-xs ml-2 text-gray-400">· Last updated {lastUpdated.toLocaleTimeString()}</span>}
+                    <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Analytics Dashboard</h1>
+                    <p className="text-gray-500 text-xs mt-1">
+                        {selectedExamName ? <><span className="text-indigo-600 font-semibold">{selectedExamName}</span> · </> : "All exams · "}
+                        {lastUpdated && <span className="text-gray-400">{lastUpdated.toLocaleTimeString()}</span>}
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
-                    <button
-                        onClick={() => setAutoRefresh(!autoRefresh)}
-                        className={cn("flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all border-2",
-                            autoRefresh ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-white border-gray-200 text-gray-500 hover:border-gray-300"
-                        )}
-                    >
-                        <span className={cn("material-symbols-outlined text-sm", autoRefresh && "animate-spin")} style={autoRefresh ? { animationDuration: "3s" } : {}}>sync</span>
-                        {autoRefresh ? "Live" : "Auto"}
+                <div className="flex items-center gap-1.5">
+                    <button onClick={() => setAutoRefresh(!autoRefresh)} className={cn("flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-semibold border transition-all", autoRefresh ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-white border-gray-200 text-gray-500 hover:border-gray-300")}>
+                        <RefreshCw className={cn("w-3 h-3", autoRefresh && "animate-spin")} style={autoRefresh ? { animationDuration: "3s" } : {}} />{autoRefresh ? "Live" : "Auto"}
                     </button>
-                    <button onClick={() => fetchData()} className="flex items-center gap-1.5 px-3 py-2 card-base bg-white text-gray-600 text-xs font-bold hover:shadow-neo-hover transition-all">
-                        <span className="material-symbols-outlined text-sm">refresh</span>
-                        Refresh
-                    </button>
-                    <button onClick={exportCSV} className="flex items-center gap-1.5 px-3 py-2 card-base bg-white text-gray-700 text-xs font-bold hover:shadow-neo-hover transition-all">
-                        <span className="material-symbols-outlined text-sm">download</span>
-                        CSV
-                    </button>
+                    <button onClick={() => refetch()} className="flex items-center gap-1 h-7 px-2.5 bg-white border border-gray-200 rounded-lg text-[11px] font-semibold text-gray-600 hover:border-gray-300"><RefreshCw className="w-3 h-3" /></button>
+                    <button onClick={exportCSV} className="flex items-center gap-1 h-7 px-2.5 bg-white border border-gray-200 rounded-lg text-[11px] font-semibold text-gray-600 hover:border-gray-300"><Download className="w-3 h-3" />CSV</button>
                 </div>
             </div>
 
-            {/* Tabs + Date Range */}
-            <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                    {tabs.map(t => (
-                        <button key={t.key} onClick={() => setTab(t.key)}
-                            className={cn("flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold transition-all border-2",
-                                tab === t.key ? "bg-gray-900 text-white border-gray-900" : "bg-white text-gray-600 border-gray-200 hover:border-gray-900"
-                            )}>
-                            <span className="material-symbols-outlined text-lg">{t.icon}</span>
-                            {t.label}
-                        </button>
-                    ))}
-                </div>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                    {dateRanges.map(r => (
-                        <button key={r.key} onClick={() => setRange(r.key)}
-                            className={cn("px-3 py-1.5 rounded-lg text-xs font-bold transition-all border-2",
-                                range === r.key ? "bg-[#A78BFA] text-white border-[#A78BFA]" : "bg-white text-gray-500 border-gray-200 hover:border-[#A78BFA]"
-                            )}>
-                            {r.label}
-                        </button>
-                    ))}
-                    {range === "custom" && (
-                        <div className="flex items-center gap-2 ml-2">
-                            <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
-                                className="px-2 py-1 text-xs border-2 border-gray-200 rounded-lg bg-white font-mono" />
-                            <span className="text-xs text-gray-400">to</span>
-                            <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
-                                className="px-2 py-1 text-xs border-2 border-gray-200 rounded-lg bg-white font-mono" />
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Content */}
-            {loading ? <LoadingSkeleton /> : (
-                <>
-                    {tab === "overview" && data && <OverviewTab data={data} />}
-                    {tab === "submissions" && data && <SubmissionsTab data={data} />}
-                    {tab === "exams" && data && <ExamsTab data={data} />}
-                    {tab === "scores" && data && <ScoresTab data={data} />}
-                    {tab === "users" && data && <UsersTab data={data} />}
-                </>
-            )}
-        </div>
-    );
-}
-
-// ─── Reusable Components ───────────────────────────────────────────
-function ChartCard({ title, subtitle, children, className }: { title: string; subtitle?: string; children: React.ReactNode; className?: string }) {
-    return (
-        <div className={cn("card-base bg-white p-5", className)}>
-            <div className="flex items-center justify-between mb-4">
-                <div>
-                    <h3 className="text-sm font-bold text-gray-500 uppercase tracking-widest">{title}</h3>
-                    {subtitle && <p className="text-xs text-gray-400 mt-0.5">{subtitle}</p>}
-                </div>
-            </div>
-            {children}
-        </div>
-    );
-}
-
-function KpiCard({ label, value, delta, icon, color, bg }: { label: string; value: string | number; delta?: number; icon: string; color: string; bg: string }) {
-    return (
-        <div className="card-base bg-white p-4 flex items-center gap-4">
-            <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0", bg)}>
-                <span className={cn("material-symbols-outlined text-2xl", color)}>{icon}</span>
-            </div>
-            <div className="min-w-0 flex-1">
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider truncate">{label}</p>
-                <p className="text-2xl font-bold text-gray-900 leading-tight">{typeof value === "number" ? value.toLocaleString() : value}</p>
-            </div>
-            {delta !== undefined && (
-                <div className={cn("flex items-center gap-0.5 text-xs font-bold px-2 py-1 rounded-lg",
-                    delta > 0 ? "bg-emerald-50 text-emerald-600" : delta < 0 ? "bg-red-50 text-red-500" : "bg-gray-50 text-gray-500"
-                )}>
-                    <span className="material-symbols-outlined text-sm">{delta > 0 ? "trending_up" : delta < 0 ? "trending_down" : "trending_flat"}</span>
-                    {Math.abs(delta)}%
-                </div>
-            )}
-        </div>
-    );
-}
-
-function EmptyState({ message }: { message: string }) {
-    return (
-        <div className="card-base bg-white p-12 flex flex-col items-center justify-center text-center">
-            <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
-                <span className="material-symbols-outlined text-3xl text-gray-300">bar_chart</span>
-            </div>
-            <p className="text-sm font-bold text-gray-400">{message}</p>
-            <p className="text-xs text-gray-300 mt-1">Try adjusting the date range or check back later.</p>
-        </div>
-    );
-}
-
-function LoadingSkeleton() {
-    return (
-        <div className="space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {[1, 2, 3, 4].map(i => (
-                    <div key={i} className="card-base bg-white p-4">
-                        <div className="h-3 w-20 bg-gray-100 rounded-full animate-pulse mb-3" />
-                        <div className="h-7 w-28 bg-gray-100 rounded-lg animate-pulse" />
+            {/* Controls: Tabs + Exam Selector + Date Range */}
+            <div className="bg-white rounded-xl border border-gray-100 p-3 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-1 flex-wrap">
+                        {tabs.map(t => {
+                            const I = t.icon; return (
+                                <button key={t.key} onClick={() => setTab(t.key)} className={cn("flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all", tab === t.key ? "bg-gray-900 text-white" : "text-gray-500 hover:bg-gray-50")}>
+                                    <I className="w-3.5 h-3.5" />{t.label}
+                                </button>
+                            );
+                        })}
                     </div>
-                ))}
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {[1, 2, 3, 4].map(i => (
-                    <div key={i} className="card-base bg-white p-5">
-                        <div className="h-4 w-32 bg-gray-100 rounded-full animate-pulse mb-6" />
-                        <div className="h-52 bg-gray-50 rounded-xl animate-pulse" />
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-}
-
-function CustomTooltip({ active, payload, label }: any) {
-    if (!active || !payload?.length) return null;
-    return (
-        <div className="bg-white border-2 border-gray-200 rounded-xl p-3 shadow-md">
-            <p className="text-xs font-bold text-gray-900 mb-1">{label}</p>
-            {payload.map((p: any, i: number) => (
-                <p key={i} className="text-xs text-gray-600">
-                    <span className="inline-block w-2 h-2 rounded-full mr-1.5 align-middle" style={{ backgroundColor: p.color }} />
-                    {p.name}: <span className="font-bold text-gray-900">{typeof p.value === "number" ? p.value.toLocaleString() : p.value}</span>
-                </p>
-            ))}
-        </div>
-    );
-}
-
-// ─── Overview Tab ──────────────────────────────────────────────────
-function OverviewTab({ data }: { data: any }) {
-    const k = data.kpis;
-    if (!k) return <EmptyState message="No data available for this period." />;
-
-    return (
-        <div className="space-y-4">
-            {/* KPI Row */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <KpiCard label="Submissions" value={k.submissions?.value || 0} delta={k.submissions?.delta} icon="upload_file" color="text-[#A78BFA]" bg="bg-[#A78BFA]/10" />
-                <KpiCard label="Avg Score" value={k.avgScore?.value || 0} delta={k.avgScore?.delta} icon="score" color="text-[#34D399]" bg="bg-[#34D399]/10" />
-                <KpiCard label="Avg Accuracy" value={`${k.avgAccuracy?.value || 0}%`} delta={k.avgAccuracy?.delta} icon="target" color="text-[#F472B6]" bg="bg-[#F472B6]/10" />
-                <KpiCard label="Active Exams" value={k.activeExams?.value || 0} delta={k.activeExams?.delta} icon="quiz" color="text-[#60A5FA]" bg="bg-[#60A5FA]/10" />
-            </div>
-
-            {/* Secondary KPIs */}
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                <KpiCard label="Highest Score" value={k.maxScore?.value || 0} icon="emoji_events" color="text-[#FBBF24]" bg="bg-[#FBBF24]/10" />
-                <KpiCard label="Unique States" value={k.uniqueStates?.value || 0} icon="location_on" color="text-[#F87171]" bg="bg-[#F87171]/10" />
-                <div className="card-base bg-gradient-to-br from-violet-50/60 to-purple-50/60 p-4">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">vs Previous Period</p>
-                    <div className="space-y-1.5">
-                        <DeltaRow label="Submissions" current={k.submissions?.value} prev={k.submissions?.prev} delta={k.submissions?.delta} />
-                        <DeltaRow label="Avg Score" current={k.avgScore?.value} prev={k.avgScore?.prev} delta={k.avgScore?.delta} />
-                        <DeltaRow label="Accuracy" current={`${k.avgAccuracy?.value}%`} prev={`${k.avgAccuracy?.prev}%`} delta={k.avgAccuracy?.delta} />
+                    {/* Exam selector */}
+                    <div className="flex items-center gap-2">
+                        <label className="text-[10px] font-semibold text-gray-400 uppercase">Exam:</label>
+                        <select value={examId || ""} onChange={e => setExamId(e.target.value ? Number(e.target.value) : null)}
+                            className="h-7 px-2 min-w-[180px] text-xs border border-gray-200 rounded-lg bg-white text-gray-700 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-300">
+                            <option value="">All Exams (aggregated)</option>
+                            {examList.map((ex: any) => <option key={ex.id} value={ex.id}>{ex.name} ({ex.agency})</option>)}
+                        </select>
                     </div>
                 </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* Sparkline Trend */}
-                <ChartCard title="Submission Trend" subtitle="Daily submission volume">
-                    {(data.dailyTrend?.length || 0) > 0 ? (
-                        <ResponsiveContainer width="100%" height={200}>
-                            <AreaChart data={data.dailyTrend}>
-                                <defs>
-                                    <linearGradient id="ovGrad" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#A78BFA" stopOpacity={0.3} />
-                                        <stop offset="95%" stopColor="#A78BFA" stopOpacity={0} />
-                                    </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                <XAxis dataKey="date" fontSize={10} tick={{ fill: "#9CA3AF" }} tickFormatter={(v) => v.slice(5)} />
-                                <YAxis fontSize={10} tick={{ fill: "#9CA3AF" }} width={40} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Area type="monotone" dataKey="count" name="Submissions" stroke="#A78BFA" strokeWidth={2} fill="url(#ovGrad)" />
-                            </AreaChart>
-                        </ResponsiveContainer>
-                    ) : <EmptyState message="No submissions in this period." />}
-                </ChartCard>
-
-                {/* Top Exams */}
-                <ChartCard title="Top Exams" subtitle="Most popular exams">
-                    {(data.topExams?.length || 0) > 0 ? (
-                        <div className="space-y-2.5">
-                            {data.topExams.map((exam: any, i: number) => {
-                                const maxCount = data.topExams[0]?.count || 1;
-                                return (
-                                    <div key={i} className="space-y-1">
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-xs font-bold text-gray-700 truncate max-w-[70%]">{exam.examName}</span>
-                                            <span className="text-xs font-bold text-gray-900">{exam.count.toLocaleString()}</span>
-                                        </div>
-                                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${(exam.count / maxCount) * 100}%`, backgroundColor: COLORS[i] }} />
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    ) : <EmptyState message="No exam data available." />}
-                </ChartCard>
-
-                {/* Category Split */}
-                <ChartCard title="Category Distribution" className="lg:col-span-2">
-                    {(data.categorySplit?.length || 0) > 0 ? (
-                        <div className="flex items-center gap-8 justify-center flex-wrap">
-                            <ResponsiveContainer width={220} height={220}>
-                                <PieChart>
-                                    <Pie data={data.categorySplit} cx="50%" cy="50%" innerRadius={55} outerRadius={85}
-                                        dataKey="count" nameKey="category" paddingAngle={3}>
-                                        {data.categorySplit.map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                                    </Pie>
-                                    <Tooltip content={<CustomTooltip />} />
-                                </PieChart>
-                            </ResponsiveContainer>
-                            <div className="space-y-2">
-                                {data.categorySplit.map((c: any, i: number) => {
-                                    const total = data.categorySplit.reduce((a: number, b: any) => a + b.count, 0);
-                                    return (
-                                        <div key={i} className="flex items-center gap-3">
-                                            <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
-                                            <span className="text-sm font-bold text-gray-700 w-10">{c.category}</span>
-                                            <span className="text-xs text-gray-400 w-20 text-right">{c.count.toLocaleString()}</span>
-                                            <span className="text-xs font-bold text-gray-500">{total > 0 ? ((c.count / total) * 100).toFixed(1) : 0}%</span>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    ) : <EmptyState message="No category data." />}
-                </ChartCard>
-            </div>
-        </div>
-    );
-}
-
-function DeltaRow({ label, current, prev, delta }: { label: string; current: any; prev: any; delta: number }) {
-    return (
-        <div className="flex items-center justify-between text-xs">
-            <span className="text-gray-500 font-medium">{label}</span>
-            <div className="flex items-center gap-2">
-                <span className="text-gray-400">{typeof prev === "number" ? prev.toLocaleString() : prev}</span>
-                <span className="text-gray-300">→</span>
-                <span className="font-bold text-gray-900">{typeof current === "number" ? current.toLocaleString() : current}</span>
-                <span className={cn("font-bold", delta > 0 ? "text-emerald-500" : delta < 0 ? "text-red-500" : "text-gray-400")}>
-                    {delta > 0 ? "+" : ""}{delta}%
-                </span>
-            </div>
-        </div>
-    );
-}
-
-// ─── Submissions Tab ───────────────────────────────────────────────
-function SubmissionsTab({ data }: { data: any }) {
-    const s = data.summary;
-    return (
-        <div className="space-y-4">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <KpiCard label="Total Submissions" value={s?.total || 0} delta={s?.delta} icon="upload_file" color="text-[#A78BFA]" bg="bg-[#A78BFA]/10" />
-                <KpiCard label="Previous Period" value={s?.prevTotal || 0} icon="history" color="text-gray-400" bg="bg-gray-100" />
-                <KpiCard label="Avg / Day" value={s?.avgPerDay || 0} icon="calendar_today" color="text-[#60A5FA]" bg="bg-[#60A5FA]/10" />
-                <KpiCard label="Peak Day" value={s?.peakDay ? `${s.peakDay.count}` : "—"} icon="trending_up" color="text-[#FBBF24]" bg="bg-[#FBBF24]/10" />
-            </div>
-
-            {(data.dailyTrend?.length || 0) > 0 ? (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <ChartCard title="Daily Submission Trend" subtitle="Current period volume" className="lg:col-span-2">
-                        <ResponsiveContainer width="100%" height={280}>
-                            <AreaChart data={data.dailyTrend}>
-                                <defs>
-                                    <linearGradient id="colorSub" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#A78BFA" stopOpacity={0.3} />
-                                        <stop offset="95%" stopColor="#A78BFA" stopOpacity={0} />
-                                    </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                <XAxis dataKey="date" fontSize={10} tick={{ fill: "#9CA3AF" }} tickFormatter={(v) => v.slice(5)} />
-                                <YAxis fontSize={10} tick={{ fill: "#9CA3AF" }} width={40} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Area type="monotone" dataKey="count" name="Submissions" stroke="#A78BFA" strokeWidth={2.5} fill="url(#colorSub)" />
-                            </AreaChart>
-                        </ResponsiveContainer>
-                    </ChartCard>
-
-                    <ChartCard title="Cumulative Submissions" subtitle="Running total over time">
-                        <ResponsiveContainer width="100%" height={240}>
-                            <AreaChart data={data.cumulativeTrend || []}>
-                                <defs>
-                                    <linearGradient id="colorCum" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#34D399" stopOpacity={0.3} />
-                                        <stop offset="95%" stopColor="#34D399" stopOpacity={0} />
-                                    </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                <XAxis dataKey="date" fontSize={10} tick={{ fill: "#9CA3AF" }} tickFormatter={(v) => v.slice(5)} />
-                                <YAxis fontSize={10} tick={{ fill: "#9CA3AF" }} width={50} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Area type="monotone" dataKey="cumulative" name="Total" stroke="#34D399" strokeWidth={2} fill="url(#colorCum)" />
-                            </AreaChart>
-                        </ResponsiveContainer>
-                    </ChartCard>
-
-                    <ChartCard title="Hour of Day" subtitle="When submissions are made">
-                        <ResponsiveContainer width="100%" height={240}>
-                            <BarChart data={data.hourly || []}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                <XAxis dataKey="hour" fontSize={9} tick={{ fill: "#9CA3AF" }} interval={3} />
-                                <YAxis fontSize={10} tick={{ fill: "#9CA3AF" }} width={40} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Bar dataKey="count" name="Submissions" fill="#60A5FA" radius={[3, 3, 0, 0]} />
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </ChartCard>
-
-                    <ChartCard title="Day of Week" subtitle="Weekly distribution">
-                        <ResponsiveContainer width="100%" height={240}>
-                            <BarChart data={data.dayOfWeek || []}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                <XAxis dataKey="day" fontSize={11} tick={{ fill: "#9CA3AF" }} />
-                                <YAxis fontSize={10} tick={{ fill: "#9CA3AF" }} width={40} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Bar dataKey="count" name="Submissions" radius={[4, 4, 0, 0]}>
-                                    {(data.dayOfWeek || []).map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </ChartCard>
+                <div className="flex items-center gap-1 flex-wrap">
+                    {ranges.map(r => (<button key={r.key} onClick={() => setRange(r.key)} className={cn("px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all", range === r.key ? "bg-indigo-500 text-white" : "text-gray-400 hover:bg-gray-50")}>{r.label}</button>))}
+                    {range === "custom" && <div className="flex items-center gap-1 ml-1">
+                        <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className="h-6 px-1.5 text-[10px] border border-gray-200 rounded bg-gray-50 font-mono" />
+                        <span className="text-[10px] text-gray-300">→</span>
+                        <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className="h-6 px-1.5 text-[10px] border border-gray-200 rounded bg-gray-50 font-mono" />
+                    </div>}
                 </div>
-            ) : <EmptyState message="No submissions in this period." />}
+            </div>
+
+            {loading ? <Skeleton /> : <>
+                {tab === "overview" && data && <OverviewTab d={data} />}
+                {tab === "submissions" && data && <SubmissionsTab d={data} />}
+                {tab === "exams" && data && <ExamsTab d={data} />}
+                {tab === "scores" && data && <ScoresTab d={data} />}
+                {tab === "users" && data && <UsersTab d={data} />}
+            </>}
         </div>
     );
 }
 
-// ─── Exams Tab ─────────────────────────────────────────────────────
-function ExamsTab({ data }: { data: any }) {
-    if ((data.perExam?.length || 0) === 0) return <EmptyState message="No exam data in this period." />;
-    return (
+// ─── OVERVIEW ──
+function OverviewTab({ d }: { d: any }) {
+    const k = d.kpis;
+    if (!k) return <Empty msg="No data available." />;
+    const single = d.isSingleExam;
+    return (<div className="space-y-4">
+        <div className="bg-gradient-to-r from-indigo-50 to-violet-50 rounded-xl border border-indigo-100/50 p-4">
+            <p className="text-sm text-gray-700"><b className="text-gray-900">{k.submissions?.value?.toLocaleString() || 0}</b> submissions
+                {!d.examId && <> across <b className="text-gray-900">{k.activeExams?.value || 0}</b> exams</>}
+                {d.examId && <> for this exam</>}
+                {" "}from <b className="text-gray-900">{k.uniqueStates?.value || 0}</b> states.
+                {single && k.avgScore && <> Average score: <b className="text-indigo-700">{k.avgScore.value}</b> with <b className="text-indigo-700">{k.avgAccuracy?.value || 0}%</b> accuracy.</>}
+                {k.submissions?.delta !== 0 && <span className={cn("ml-1 text-xs font-bold", k.submissions?.delta > 0 ? "text-emerald-600" : "text-red-500")}>{k.submissions?.delta > 0 ? "↑" : "↓"} {Math.abs(k.submissions?.delta)}% vs prev</span>}</p>
+        </div>
+        {/* Count KPIs — always shown */}
+        <div className={cn("grid gap-3", single ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-2 lg:grid-cols-3")}>
+            <Kpi label="Total Submissions" value={k.submissions?.value || 0} delta={k.submissions?.delta} icon={Upload} color="text-indigo-600" bg="bg-indigo-50" />
+            {!d.examId && <Kpi label="Active Exams" value={k.activeExams?.value || 0} delta={k.activeExams?.delta} icon={GraduationCap} color="text-blue-600" bg="bg-blue-50" />}
+            <Kpi label="States" value={k.uniqueStates?.value || 0} icon={MapPin} color="text-red-500" bg="bg-red-50" />
+            {/* Score KPIs — only when single exam */}
+            {single && k.avgScore && <Kpi label="Avg Score" value={k.avgScore.value} delta={k.avgScore.delta} icon={Gauge} color="text-emerald-600" bg="bg-emerald-50" />}
+            {single && k.avgAccuracy && <Kpi label="Avg Accuracy" value={`${k.avgAccuracy.value}%`} delta={k.avgAccuracy.delta} icon={Target} color="text-rose-600" bg="bg-rose-50" />}
+        </div>
+        {/* Attempt stats — only single exam */}
+        {single && k.avgAttempted && <div className="grid grid-cols-3 gap-3">
+            <Kpi label="Avg Attempted" value={k.avgAttempted.value} icon={Crosshair} color="text-violet-600" bg="bg-violet-50" />
+            <Kpi label="Avg Correct" value={k.avgCorrect?.value || 0} icon={Award} color="text-emerald-600" bg="bg-emerald-50" />
+            <Kpi label="Avg Wrong" value={k.avgWrong?.value || 0} icon={Minus} color="text-red-500" bg="bg-red-50" />
+        </div>}
+        {!single && <ExamHint />}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Submissions per Exam with avg score overlay */}
-            <ChartCard title="Submissions per Exam" subtitle="Top 100 exams by submission count" className="lg:col-span-2">
-                <ResponsiveContainer width="100%" height={Math.max(300, (data.perExam?.length || 0) * 38)}>
-                    <BarChart data={data.perExam} layout="vertical" margin={{ left: 10, right: 30 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis type="number" fontSize={11} tick={{ fill: "#9CA3AF" }} />
-                        <YAxis type="category" dataKey="examName" fontSize={10} tick={{ fill: "#6B7280" }} width={200} />
-                        <Tooltip content={<CustomTooltip />} />
-                        <Bar dataKey="count" name="Submissions" radius={[0, 4, 4, 0]}>
-                            {(data.perExam || []).map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                        </Bar>
-                    </BarChart>
-                </ResponsiveContainer>
-                {/* Tabular summary beneath */}
-                <div className="mt-4 border-t border-gray-100 pt-4 max-h-[500px] overflow-y-auto">
-                    <div className="grid grid-cols-12 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">
-                        <span className="col-span-5">Exam</span>
-                        <span className="col-span-2 text-center">Agency</span>
-                        <span className="col-span-2 text-right">Count</span>
-                        <span className="col-span-3 text-right">Avg Score</span>
-                    </div>
-                    {(data.perExam || []).slice(0, 100).map((e: any, i: number) => (
-                        <div key={i} className="grid grid-cols-12 text-xs py-1.5 px-1 hover:bg-gray-50 rounded-lg">
-                            <span className="col-span-5 font-bold text-gray-700 truncate flex items-center gap-1.5">
-                                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
-                                {e.examName}
-                            </span>
-                            <span className="col-span-2 text-center text-gray-500 font-medium">{e.agency}</span>
-                            <span className="col-span-2 text-right font-bold text-gray-900">{e.count.toLocaleString()}</span>
-                            <span className="col-span-3 text-right font-bold text-gray-600">{e.avgScore}</span>
-                        </div>
-                    ))}
+            <Card title="Submission Trend" sub="Daily volume">
+                {(d.dailyTrend?.length || 0) > 0 ? <ResponsiveContainer width="100%" height={200}>
+                    <AreaChart data={d.dailyTrend}><defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.2} /><stop offset="95%" stopColor="#6366f1" stopOpacity={0} /></linearGradient></defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis dataKey="date" fontSize={9} tick={{ fill: "#9CA3AF" }} tickFormatter={v => v.slice(5)} /><YAxis fontSize={9} tick={{ fill: "#9CA3AF" }} width={35} />
+                        <Tooltip content={<Tip />} /><Area type="monotone" dataKey="count" name="Submissions" stroke="#6366f1" strokeWidth={2} fill="url(#g1)" />
+                    </AreaChart></ResponsiveContainer> : <Empty msg="No trend data." />}
+            </Card>
+            {/* Top exams — only in "all exams" mode */}
+            {!d.examId && (d.topExams?.length || 0) > 0 && <Card title="Top Exams" sub="Most submitted exams">
+                <div className="space-y-3">{d.topExams.map((e: any, i: number) => {
+                    const mx = d.topExams[0]?.count || 1;
+                    return (<div key={i}><div className="flex justify-between text-xs"><span className="font-semibold text-gray-700 truncate max-w-[70%]">{e.examName}</span><span className="font-bold text-gray-900">{e.count.toLocaleString()}</span></div>
+                        <div className="h-1.5 bg-gray-100 rounded-full mt-1 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${(e.count / mx) * 100}%`, backgroundColor: C[i] }} /></div></div>);
+                })}</div>
+            </Card>}
+            {/* Category split (count-based — safe across exams) */}
+            <Card title="Category Distribution" sub="Reservation category breakdown">
+                {(d.categorySplit?.length || 0) > 0 ? <div className="flex items-center gap-6 justify-center flex-wrap">
+                    <ResponsiveContainer width={160} height={160}><PieChart><Pie data={d.categorySplit} cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="count" nameKey="category" paddingAngle={3}>
+                        {d.categorySplit.map((_: any, i: number) => <Cell key={i} fill={C[i % C.length]} />)}</Pie><Tooltip content={<Tip />} /></PieChart></ResponsiveContainer>
+                    <div className="space-y-1.5">{d.categorySplit.map((c: any, i: number) => {
+                        const tot = d.categorySplit.reduce((a: number, b: any) => a + b.count, 0);
+                        return (<div key={i} className="flex items-center gap-2 text-xs"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: C[i % C.length] }} /><span className="font-semibold text-gray-700 w-10">{c.category}</span><span className="text-gray-400">{c.count.toLocaleString()}</span><span className="text-[10px] text-gray-400 bg-gray-50 px-1 rounded">{tot > 0 ? ((c.count / tot) * 100).toFixed(0) : 0}%</span></div>);
+                    })}</div>
+                </div> : <Empty msg="No category data." />}
+            </Card>
+            {/* Attempt vs Accuracy — only single exam */}
+            {single && (d.attemptAnalysis?.length || 0) > 0 && <Card title="Attempt vs Accuracy" sub="How attempt count affects performance">
+                <ResponsiveContainer width="100%" height={200}>
+                    <ComposedChart data={d.attemptAnalysis}><CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                        <XAxis dataKey="bucket" fontSize={10} tick={{ fill: "#9CA3AF" }} /><YAxis yAxisId="l" fontSize={9} tick={{ fill: "#6366f1" }} width={35} /><YAxis yAxisId="r" orientation="right" fontSize={9} tick={{ fill: "#22c55e" }} width={35} domain={[0, 100]} />
+                        <Tooltip content={<Tip />} /><Legend wrapperStyle={{ fontSize: 10 }} />
+                        <Bar yAxisId="l" dataKey="avgScore" name="Avg Score" fill="#6366f1" radius={[3, 3, 0, 0]} />
+                        <Line yAxisId="r" type="monotone" dataKey="avgAccuracy" name="Accuracy %" stroke="#22c55e" strokeWidth={2} dot={{ r: 3 }} />
+                    </ComposedChart></ResponsiveContainer>
+            </Card>}
+            {/* Category performance — only single exam */}
+            {single && (d.categoryPerformance?.length || 0) > 0 && <Card title="Category Performance" sub="Avg score by reservation category (this exam only)">
+                <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={d.categoryPerformance}><CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                        <XAxis dataKey="category" fontSize={10} tick={{ fill: "#6B7280" }} /><YAxis fontSize={9} tick={{ fill: "#9CA3AF" }} width={35} /><Tooltip content={<Tip />} />
+                        <Bar dataKey="avgScore" name="Avg Score" radius={[4, 4, 0, 0]}>{(d.categoryPerformance || []).map((_: any, i: number) => <Cell key={i} fill={C[i % C.length]} />)}</Bar>
+                    </BarChart></ResponsiveContainer>
+            </Card>}
+        </div>
+        {/* Top Performers — 3 rankings, only single exam */}
+        {single && ((d.topByRawScore?.length || 0) > 0 || (d.topByNormScore?.length || 0) > 0 || (d.topByPercentile?.length || 0) > 0) && <TopPerformersSection d={d} />}
+    </div>);
+}
+
+// ─── SUBMISSIONS ──
+function SubmissionsTab({ d }: { d: any }) {
+    const s = d.summary;
+    return (<div className="space-y-4">
+        <div className="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-100/50 p-4">
+            <p className="text-sm text-gray-700"><b className="text-gray-900">{s?.total?.toLocaleString() || 0}</b> total submissions{s?.avgPerDay > 0 && <>, averaging <b>{s.avgPerDay}</b>/day</>}.
+                {s?.peakDay && <> Peak: <b className="text-blue-700">{s.peakDay.date}</b> ({s.peakDay.count}).</>}
+                {s?.delta !== 0 && <span className={cn("ml-1 text-xs font-bold", s?.delta > 0 ? "text-emerald-600" : "text-red-500")}>{s?.delta > 0 ? "↑" : "↓"} {Math.abs(s?.delta)}%</span>}</p>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <Kpi label="Total" value={s?.total || 0} delta={s?.delta} icon={Upload} color="text-indigo-600" bg="bg-indigo-50" />
+            <Kpi label="Avg / Day" value={s?.avgPerDay || 0} icon={Calendar} color="text-blue-600" bg="bg-blue-50" />
+            <Kpi label="Peak Day" value={s?.peakDay?.count || "—"} icon={TrendingUp} color="text-amber-600" bg="bg-amber-50" />
+            <Kpi label="Prev Period" value={s?.prevTotal || 0} icon={Clock} color="text-gray-400" bg="bg-gray-100" />
+        </div>
+        {(d.dailyTrend?.length || 0) > 0 ? <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Card title="Daily Trend" className="lg:col-span-2">
+                <ResponsiveContainer width="100%" height={220}><AreaChart data={d.dailyTrend}>
+                    <defs><linearGradient id="gs" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.2} /><stop offset="95%" stopColor="#6366f1" stopOpacity={0} /></linearGradient></defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis dataKey="date" fontSize={9} tick={{ fill: "#9CA3AF" }} tickFormatter={v => v.slice(5)} /><YAxis fontSize={9} tick={{ fill: "#9CA3AF" }} width={35} /><Tooltip content={<Tip />} />
+                    <Area type="monotone" dataKey="count" name="Submissions" stroke="#6366f1" strokeWidth={2} fill="url(#gs)" />
+                </AreaChart></ResponsiveContainer>
+            </Card>
+            <Card title="By Hour"><ResponsiveContainer width="100%" height={180}><BarChart data={d.hourly || []}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis dataKey="hour" fontSize={8} tick={{ fill: "#9CA3AF" }} interval={3} /><YAxis fontSize={9} tick={{ fill: "#9CA3AF" }} width={30} /><Tooltip content={<Tip />} />
+                <Bar dataKey="count" name="Submissions" fill="#3b82f6" radius={[3, 3, 0, 0]} />
+            </BarChart></ResponsiveContainer></Card>
+            <Card title="By Day of Week"><ResponsiveContainer width="100%" height={180}><BarChart data={d.dayOfWeek || []}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis dataKey="day" fontSize={10} tick={{ fill: "#9CA3AF" }} /><YAxis fontSize={9} tick={{ fill: "#9CA3AF" }} width={30} /><Tooltip content={<Tip />} />
+                <Bar dataKey="count" name="Submissions" radius={[4, 4, 0, 0]}>{(d.dayOfWeek || []).map((_: any, i: number) => <Cell key={i} fill={C[i % C.length]} />)}</Bar>
+            </BarChart></ResponsiveContainer></Card>
+            <Card title="Cumulative Growth"><ResponsiveContainer width="100%" height={180}><AreaChart data={d.cumulativeTrend || []}>
+                <defs><linearGradient id="gc" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#22c55e" stopOpacity={0.2} /><stop offset="95%" stopColor="#22c55e" stopOpacity={0} /></linearGradient></defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis dataKey="date" fontSize={9} tick={{ fill: "#9CA3AF" }} tickFormatter={v => v.slice(5)} /><YAxis fontSize={9} tick={{ fill: "#9CA3AF" }} width={40} /><Tooltip content={<Tip />} />
+                <Area type="monotone" dataKey="cumulative" name="Total" stroke="#22c55e" strokeWidth={2} fill="url(#gc)" />
+            </AreaChart></ResponsiveContainer></Card>
+            {(d.sourceDist?.length || 0) > 0 && <Card title="Submission Sources">
+                <div className="space-y-2">{d.sourceDist.map((s: any, i: number) => {
+                    const tot = d.sourceDist.reduce((a: number, b: any) => a + b.count, 0);
+                    return (<div key={i} className="flex items-center justify-between text-xs"><div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: C[i % C.length] }} /><span className="font-semibold text-gray-700">{s.source}</span></div><div className="flex items-center gap-2"><span className="font-bold text-gray-900">{s.count.toLocaleString()}</span><span className="text-[10px] text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">{tot > 0 ? ((s.count / tot) * 100).toFixed(0) : 0}%</span></div></div>);
+                })}</div>
+            </Card>}
+        </div> : <Empty msg="No submissions in this period." />}
+    </div>);
+}
+
+// ─── EXAMS ──  (comparison tab — shows each exam's OWN stats side by side)
+function ExamsTab({ d }: { d: any }) {
+    if ((d.perExam?.length || 0) === 0) return <Empty msg="No exam data." />;
+    return (<div className="space-y-4">
+        <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border border-emerald-100/50 p-4">
+            <p className="text-sm text-gray-700">Comparing <b className="text-gray-900">{d.perExam?.length || 0}</b> exams across <b className="text-gray-900">{d.agencyDist?.length || 0}</b> agencies. Each exam&apos;s statistics are computed independently — scores are <b>not</b> mixed.</p>
+        </div>
+        <div className="grid grid-cols-1 gap-4">
+            <Card title="Exam Comparison" sub="Each exam's own statistics (not blended)">
+                <div className="overflow-x-auto max-h-[500px]"><table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-white"><tr className="text-[10px] text-gray-400 uppercase tracking-wider border-b border-gray-100">
+                        <th className="text-left py-2 pr-2">#</th><th className="text-left py-2 pr-2">Exam</th><th className="text-left py-2 pr-2">Agency</th><th className="text-right py-2 pr-2">Submissions</th><th className="text-right py-2 pr-2">Avg Score</th><th className="text-right py-2 pr-2">Max Score</th><th className="text-right py-2">Accuracy</th>
+                    </tr></thead>
+                    <tbody>{(d.perExam || []).slice(0, 50).map((e: any, i: number) => (
+                        <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/50">
+                            <td className="py-2 pr-2 text-gray-400 font-mono">{i + 1}</td>
+                            <td className="py-2 pr-2"><span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: C[i % C.length] }} /><span className="font-semibold text-gray-800 truncate max-w-[200px]">{e.examName}</span></span></td>
+                            <td className="py-2 pr-2 text-gray-500">{e.agency}</td>
+                            <td className="py-2 pr-2 text-right font-bold text-gray-900">{e.count.toLocaleString()}</td>
+                            <td className="py-2 pr-2 text-right text-gray-700">{e.avgScore}</td>
+                            <td className="py-2 pr-2 text-right text-gray-700">{e.maxScore}</td>
+                            <td className="py-2 text-right text-gray-600">{e.avgAccuracy}%</td>
+                        </tr>
+                    ))}</tbody>
+                </table></div>
+            </Card>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Card title="Agency Distribution">
+                <ResponsiveContainer width="100%" height={200}><PieChart>
+                    <Pie data={d.agencyDist || []} cx="50%" cy="50%" innerRadius={45} outerRadius={75} dataKey="count" nameKey="agency" paddingAngle={3}
+                        label={({ agency, percent }: any) => `${agency} ${(percent * 100).toFixed(0)}%`} labelLine={false} fontSize={10}>
+                        {(d.agencyDist || []).map((_: any, i: number) => <Cell key={i} fill={C[i % C.length]} />)}
+                    </Pie><Tooltip content={<Tip />} />
+                </PieChart></ResponsiveContainer>
+            </Card>
+            {(d.popularityOverTime?.length || 0) > 0 && <Card title="Exam Popularity Over Time" sub="Top 5 exams">
+                <ResponsiveContainer width="100%" height={200}><LineChart data={transformPop(d.popularityOverTime)}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis dataKey="date" fontSize={9} tick={{ fill: "#9CA3AF" }} tickFormatter={v => v.slice(5)} /><YAxis fontSize={9} tick={{ fill: "#9CA3AF" }} /><Tooltip content={<Tip />} /><Legend wrapperStyle={{ fontSize: 10 }} />
+                    {getUniq(d.popularityOverTime).map((n, i) => <Line key={n} type="monotone" dataKey={n} stroke={C[i % C.length]} strokeWidth={2} dot={false} />)}
+                </LineChart></ResponsiveContainer>
+            </Card>}
+        </div>
+    </div>);
+}
+
+// ─── SCORES ──  (requires single exam)
+function ScoresTab({ d }: { d: any }) {
+    if (d.warning) return <Warning msg={d.warning} />;
+    const s = d.summary;
+    if (!s) return <Empty msg="No score data." />;
+    return (<div className="space-y-4">
+        <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-100/50 p-4">
+            <p className="text-sm text-gray-700">Average: <b className="text-gray-900">{s.avgScore}</b> (median: <b>{s.median}</b>). Range: <b>{s.minScore}</b> → <b>{s.maxScore}</b>. Std dev: <b className="text-amber-700">{s.stdDev}</b>. IQR: <b>{s.p25}</b>–<b>{s.p75}</b>.
+                {s.delta !== 0 && <span className={cn("ml-1 text-xs font-bold", s.delta > 0 ? "text-emerald-600" : "text-red-500")}>{s.delta > 0 ? "↑" : "↓"} {Math.abs(s.delta)}%</span>}</p>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <Kpi label="Avg Score" value={s.avgScore} delta={s.delta} icon={Gauge} color="text-emerald-600" bg="bg-emerald-50" />
+            <Kpi label="Median" value={s.median} icon={Activity} color="text-indigo-600" bg="bg-indigo-50" />
+            <Kpi label="Std Dev" value={s.stdDev} icon={Sigma} color="text-violet-600" bg="bg-violet-50" />
+            <Kpi label="P90" value={s.p90} icon={ArrowUpRight} color="text-blue-600" bg="bg-blue-50" />
+            <Kpi label="P10" value={s.p10} icon={ArrowDownRight} color="text-red-500" bg="bg-red-50" />
+            <Kpi label="Accuracy" value={`${s.avgAccuracy}%`} icon={Target} color="text-rose-600" bg="bg-rose-50" />
+        </div>
+        {/* Percentile box */}
+        {s.maxScore > 0 && <div className="bg-white rounded-xl border border-gray-100 p-4">
+            <h3 className="text-xs font-bold text-gray-800 mb-3">Percentile Distribution</h3>
+            <div className="relative h-10 bg-gray-50 rounded-lg mx-4">
+                <div className="absolute top-0 h-full bg-indigo-100 rounded" style={{ left: `${(s.p10 / s.maxScore) * 100}%`, width: `${((s.p90 - s.p10) / s.maxScore) * 100}%` }} />
+                <div className="absolute top-0 h-full bg-indigo-200 rounded" style={{ left: `${(s.p25 / s.maxScore) * 100}%`, width: `${((s.p75 - s.p25) / s.maxScore) * 100}%` }} />
+                <div className="absolute top-0 h-full w-0.5 bg-indigo-600" style={{ left: `${(s.median / s.maxScore) * 100}%` }} />
+                {[{ v: s.p10, l: "P10" }, { v: s.p25, l: "P25" }, { v: s.median, l: "Med" }, { v: s.p75, l: "P75" }, { v: s.p90, l: "P90" }].map(p => (
+                    <span key={p.l} className="absolute -bottom-5 text-[9px] font-bold text-gray-500 -translate-x-1/2" style={{ left: `${(p.v / s.maxScore) * 100}%` }}>{p.l}: {p.v}</span>
+                ))}
+            </div><div className="h-6" />
+        </div>}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Card title="Score Histogram" className="lg:col-span-2">
+                <ResponsiveContainer width="100%" height={220}><BarChart data={d.scoreDistribution}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis dataKey="bucket" fontSize={9} tick={{ fill: "#9CA3AF" }} /><YAxis fontSize={9} tick={{ fill: "#9CA3AF" }} width={35} /><Tooltip content={<Tip />} />
+                    <Bar dataKey="count" name="Candidates" radius={[4, 4, 0, 0]}>{(d.scoreDistribution || []).map((_: any, i: number) => <Cell key={i} fill={C[i % C.length]} />)}</Bar>
+                </BarChart></ResponsiveContainer>
+            </Card>
+            <Card title="Accuracy Distribution">
+                <ResponsiveContainer width="100%" height={180}><BarChart data={d.accuracyDistribution || []}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis dataKey="bucket" fontSize={8} tick={{ fill: "#9CA3AF" }} /><YAxis fontSize={9} tick={{ fill: "#9CA3AF" }} width={30} /><Tooltip content={<Tip />} />
+                    <Bar dataKey="count" name="Candidates" radius={[4, 4, 0, 0]}>{(d.accuracyDistribution || []).map((_: any, i: number) => <Cell key={i} fill={C[(i + 3) % C.length]} />)}</Bar>
+                </BarChart></ResponsiveContainer>
+            </Card>
+            <Card title="Score & Accuracy Trend" sub="Daily averages">
+                <ResponsiveContainer width="100%" height={180}><ComposedChart data={d.avgScoreTrend || []}>
+                    <defs><linearGradient id="gsc" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#22c55e" stopOpacity={0.15} /><stop offset="95%" stopColor="#22c55e" stopOpacity={0} /></linearGradient></defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis dataKey="date" fontSize={9} tick={{ fill: "#9CA3AF" }} tickFormatter={v => v.slice(5)} /><YAxis yAxisId="l" fontSize={9} tick={{ fill: "#22c55e" }} width={35} /><YAxis yAxisId="r" orientation="right" fontSize={9} tick={{ fill: "#8b5cf6" }} width={35} domain={[0, 100]} />
+                    <Tooltip content={<Tip />} /><Legend wrapperStyle={{ fontSize: 10 }} />
+                    <Area yAxisId="l" type="monotone" dataKey="avgScore" name="Avg Score" stroke="#22c55e" strokeWidth={2} fill="url(#gsc)" />
+                    <Line yAxisId="r" type="monotone" dataKey="avgAccuracy" name="Accuracy %" stroke="#8b5cf6" strokeWidth={2} dot={false} strokeDasharray="5 5" />
+                </ComposedChart></ResponsiveContainer>
+            </Card>
+            {d.normComparison && d.normComparison.avgNormalized != null && <Card title="Raw vs Normalized" sub="Score normalization impact" className="lg:col-span-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="text-center"><p className="text-[10px] text-gray-400 uppercase font-semibold">Avg Raw</p><p className="text-lg font-bold text-indigo-600">{d.normComparison.avgRaw}</p></div>
+                    <div className="text-center"><p className="text-[10px] text-gray-400 uppercase font-semibold">Avg Normalized</p><p className="text-lg font-bold text-emerald-600">{d.normComparison.avgNormalized}</p></div>
+                    <div className="text-center"><p className="text-[10px] text-gray-400 uppercase font-semibold">Max Raw</p><p className="text-lg font-bold text-gray-800">{d.normComparison.maxRaw}</p></div>
+                    <div className="text-center"><p className="text-[10px] text-gray-400 uppercase font-semibold">Max Normalized</p><p className="text-lg font-bold text-gray-800">{d.normComparison.maxNormalized || "—"}</p></div>
                 </div>
-            </ChartCard>
-
-            <ChartCard title="Agency Distribution" subtitle="Submissions by conducting body">
-                <ResponsiveContainer width="100%" height={260}>
-                    <PieChart>
-                        <Pie data={data.agencyDist || []} cx="50%" cy="50%" innerRadius={55} outerRadius={90}
-                            dataKey="count" nameKey="agency" paddingAngle={3}
-                            label={({ agency, percent }: any) => `${agency} ${(percent * 100).toFixed(0)}%`}
-                            labelLine={false} fontSize={11}>
-                            {(data.agencyDist || []).map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                        </Pie>
-                        <Tooltip content={<CustomTooltip />} />
-                    </PieChart>
-                </ResponsiveContainer>
-            </ChartCard>
-
-            <ChartCard title="Top Exams Over Time" subtitle="Daily trend for top 5 exams">
-                {(data.popularityOverTime?.length || 0) > 0 ? (
-                    <ResponsiveContainer width="100%" height={260}>
-                        <LineChart data={transformPopularity(data.popularityOverTime)}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                            <XAxis dataKey="date" fontSize={10} tick={{ fill: "#9CA3AF" }} tickFormatter={(v) => v.slice(5)} />
-                            <YAxis fontSize={10} tick={{ fill: "#9CA3AF" }} />
-                            <Tooltip content={<CustomTooltip />} />
-                            <Legend wrapperStyle={{ fontSize: 10 }} />
-                            {getUniqueExams(data.popularityOverTime).map((name, i) => (
-                                <Line key={name} type="monotone" dataKey={name} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={false} />
-                            ))}
-                        </LineChart>
-                    </ResponsiveContainer>
-                ) : <EmptyState message="Not enough data for timeline." />}
-            </ChartCard>
+                <p className="text-[11px] text-gray-400 mt-3 text-center">{d.normComparison.normalizedCount} of {d.normComparison.totalCount} submissions normalized</p>
+            </Card>}
         </div>
-    );
+    </div>);
 }
 
-// ─── Scores Tab ────────────────────────────────────────────────────
-function ScoresTab({ data }: { data: any }) {
-    const s = data.summary;
-    return (
-        <div className="space-y-4">
-            {/* Stats Row */}
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                <KpiCard label="Avg Score" value={s?.avgScore || 0} delta={s?.delta} icon="score" color="text-[#34D399]" bg="bg-[#34D399]/10" />
-                <KpiCard label="Median" value={s?.median || 0} icon="linear_scale" color="text-[#A78BFA]" bg="bg-[#A78BFA]/10" />
-                <KpiCard label="P90 Score" value={s?.p90 || 0} icon="keyboard_double_arrow_up" color="text-[#60A5FA]" bg="bg-[#60A5FA]/10" />
-                <KpiCard label="P10 Score" value={s?.p10 || 0} icon="keyboard_double_arrow_down" color="text-[#F87171]" bg="bg-[#F87171]/10" />
-                <KpiCard label="Max Score" value={s?.maxScore || 0} icon="emoji_events" color="text-[#FBBF24]" bg="bg-[#FBBF24]/10" />
-                <KpiCard label="Accuracy" value={`${s?.avgAccuracy || 0}%`} icon="target" color="text-[#F472B6]" bg="bg-[#F472B6]/10" />
-            </div>
-
-            {(data.scoreDistribution?.length || 0) > 0 ? (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <ChartCard title="Score Distribution" subtitle="Histogram of raw scores (20-pt buckets)" className="lg:col-span-2">
-                        <ResponsiveContainer width="100%" height={280}>
-                            <BarChart data={data.scoreDistribution}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                <XAxis dataKey="bucket" fontSize={10} tick={{ fill: "#9CA3AF" }} />
-                                <YAxis fontSize={10} tick={{ fill: "#9CA3AF" }} width={40} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Bar dataKey="count" name="Candidates" radius={[4, 4, 0, 0]}>
-                                    {(data.scoreDistribution || []).map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </ChartCard>
-
-                    {/* Accuracy Distribution */}
-                    <ChartCard title="Accuracy Distribution" subtitle="How accurate are candidates?">
-                        <ResponsiveContainer width="100%" height={240}>
-                            <BarChart data={data.accuracyDistribution || []}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                <XAxis dataKey="bucket" fontSize={9} tick={{ fill: "#9CA3AF" }} />
-                                <YAxis fontSize={10} tick={{ fill: "#9CA3AF" }} width={40} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Bar dataKey="count" name="Candidates" radius={[4, 4, 0, 0]}>
-                                    {(data.accuracyDistribution || []).map((_: any, i: number) => <Cell key={i} fill={COLORS[(i + 3) % COLORS.length]} />)}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </ChartCard>
-
-                    {/* Score + Accuracy Trend */}
-                    <ChartCard title="Score & Accuracy Trend" subtitle="Daily averages over time">
-                        <ResponsiveContainer width="100%" height={240}>
-                            <ComposedChart data={data.avgScoreTrend || []}>
-                                <defs>
-                                    <linearGradient id="colorAvgS" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#34D399" stopOpacity={0.2} />
-                                        <stop offset="95%" stopColor="#34D399" stopOpacity={0} />
-                                    </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                <XAxis dataKey="date" fontSize={10} tick={{ fill: "#9CA3AF" }} tickFormatter={(v) => v.slice(5)} />
-                                <YAxis yAxisId="left" fontSize={10} tick={{ fill: "#34D399" }} width={40} />
-                                <YAxis yAxisId="right" orientation="right" fontSize={10} tick={{ fill: "#A78BFA" }} width={40} domain={[0, 100]} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Legend wrapperStyle={{ fontSize: 10 }} />
-                                <Area yAxisId="left" type="monotone" dataKey="avgScore" name="Avg Score" stroke="#34D399" strokeWidth={2} fill="url(#colorAvgS)" />
-                                <Line yAxisId="right" type="monotone" dataKey="avgAccuracy" name="Accuracy %" stroke="#A78BFA" strokeWidth={2} dot={false} strokeDasharray="5 5" />
-                            </ComposedChart>
-                        </ResponsiveContainer>
-                    </ChartCard>
-                </div>
-            ) : <EmptyState message="No score data in this period." />}
+// ─── DEMOGRAPHICS ──
+function UsersTab({ d }: { d: any }) {
+    const s = d.summary; const single = d.isSingleExam;
+    return (<div className="space-y-4">
+        <div className="bg-gradient-to-r from-rose-50 to-pink-50 rounded-xl border border-rose-100/50 p-4">
+            <p className="text-sm text-gray-700"><b className="text-gray-900">{s?.total?.toLocaleString() || 0}</b> candidates from <b className="text-gray-900">{s?.uniqueStates || 0}</b> states.
+                {!single && " Demographic counts shown. Select an exam for score-based breakdowns."}
+                {s?.delta !== 0 && <span className={cn("ml-1 text-xs font-bold", s?.delta > 0 ? "text-emerald-600" : "text-red-500")}> {s?.delta > 0 ? "↑" : "↓"}{Math.abs(s?.delta)}%</span>}</p>
         </div>
-    );
-}
-
-// ─── Users Tab ─────────────────────────────────────────────────────
-function UsersTab({ data }: { data: any }) {
-    const s = data.summary;
-    return (
-        <div className="space-y-4">
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                <KpiCard label="Total Users" value={s?.total || 0} delta={s?.delta} icon="group" color="text-[#A78BFA]" bg="bg-[#A78BFA]/10" />
-                <KpiCard label="Previous Period" value={s?.prevTotal || 0} icon="history" color="text-gray-400" bg="bg-gray-100" />
-                <KpiCard label="Unique States" value={s?.uniqueStates || 0} icon="location_on" color="text-[#F87171]" bg="bg-[#F87171]/10" />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* State Distribution */}
-                <ChartCard title="Geographic Distribution" subtitle="Top 50 states by submissions" className="lg:col-span-2">
-                    {(data.stateDist?.length || 0) > 0 ? (
-                        <ResponsiveContainer width="100%" height={Math.max(280, (data.stateDist?.length || 0) * 32)}>
-                            <BarChart data={data.stateDist} layout="vertical" margin={{ left: 10 }}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                <XAxis type="number" fontSize={11} tick={{ fill: "#9CA3AF" }} />
-                                <YAxis type="category" dataKey="state" fontSize={11} tick={{ fill: "#6B7280" }} width={150} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Bar dataKey="count" name="Submissions" radius={[0, 4, 4, 0]}>
-                                    {(data.stateDist || []).map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    ) : <EmptyState message="No geographic data available." />}
-                </ChartCard>
-
-                {/* Category Distribution */}
-                <ChartCard title="Category Distribution">
-                    <ResponsiveContainer width="100%" height={260}>
-                        <PieChart>
-                            <Pie data={data.categoryDist || []} cx="50%" cy="50%" innerRadius={50} outerRadius={85}
-                                dataKey="count" nameKey="category" paddingAngle={3}
-                                label={({ category, percent }: any) => `${category} ${(percent * 100).toFixed(0)}%`}
-                                labelLine={false} fontSize={11}>
-                                {(data.categoryDist || []).map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                            </Pie>
-                            <Tooltip content={<CustomTooltip />} />
-                        </PieChart>
-                    </ResponsiveContainer>
-                </ChartCard>
-
-                {/* Gender + PWD */}
-                <ChartCard title="Gender & PWD Distribution">
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 text-center">Gender</p>
-                            <ResponsiveContainer width="100%" height={180}>
-                                <PieChart>
-                                    <Pie data={data.genderDist || []} cx="50%" cy="50%" innerRadius={30} outerRadius={55}
-                                        dataKey="count" nameKey="gender" paddingAngle={3}>
-                                        {(data.genderDist || []).map((_: any, i: number) => <Cell key={i} fill={COLORS[(i + 2) % COLORS.length]} />)}
-                                    </Pie>
-                                    <Tooltip content={<CustomTooltip />} />
-                                </PieChart>
-                            </ResponsiveContainer>
-                            <div className="flex justify-center gap-3 mt-1">
-                                {(data.genderDist || []).map((g: any, i: number) => (
-                                    <span key={i} className="flex items-center gap-1 text-xs text-gray-600">
-                                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[(i + 2) % COLORS.length] }} />
-                                        {g.gender}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-                        <div>
-                            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 text-center">PWD Status</p>
-                            <ResponsiveContainer width="100%" height={180}>
-                                <PieChart>
-                                    <Pie data={data.pwdDist || []} cx="50%" cy="50%" innerRadius={30} outerRadius={55}
-                                        dataKey="count" nameKey="label" paddingAngle={3}>
-                                        {(data.pwdDist || []).map((_: any, i: number) => <Cell key={i} fill={i === 0 ? "#A78BFA" : "#E5E7EB"} />)}
-                                    </Pie>
-                                    <Tooltip content={<CustomTooltip />} />
-                                </PieChart>
-                            </ResponsiveContainer>
-                            <div className="flex justify-center gap-3 mt-1">
-                                {(data.pwdDist || []).map((p: any, i: number) => (
-                                    <span key={i} className="flex items-center gap-1 text-xs text-gray-600">
-                                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: i === 0 ? "#A78BFA" : "#E5E7EB" }} />
-                                        {p.label}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
+        <div className="grid grid-cols-3 gap-3">
+            <Kpi label="Total" value={s?.total || 0} delta={s?.delta} icon={Users} color="text-indigo-600" bg="bg-indigo-50" />
+            <Kpi label="States" value={s?.uniqueStates || 0} icon={MapPin} color="text-red-500" bg="bg-red-50" />
+            <Kpi label="Prev Period" value={s?.prevTotal || 0} icon={Clock} color="text-gray-400" bg="bg-gray-100" />
+        </div>
+        {!single && <ExamHint />}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Count-based (always safe) */}
+            <Card title="Top States" sub="By submission count" className="lg:col-span-2">
+                {(d.stateDist?.length || 0) > 0 ? <ResponsiveContainer width="100%" height={Math.min(400, Math.max(180, (d.stateDist?.length || 0) * 26))}>
+                    <BarChart data={d.stateDist} layout="vertical" margin={{ left: 10 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis type="number" fontSize={10} tick={{ fill: "#9CA3AF" }} />
+                        <YAxis type="category" dataKey="state" fontSize={10} tick={{ fill: "#6B7280" }} width={120} /><Tooltip content={<Tip />} />
+                        <Bar dataKey="count" name="Submissions" radius={[0, 4, 4, 0]}>{(d.stateDist || []).map((_: any, i: number) => <Cell key={i} fill={C[i % C.length]} />)}</Bar>
+                    </BarChart></ResponsiveContainer> : <Empty msg="No state data." />}
+            </Card>
+            <Card title="Category Split">
+                <ResponsiveContainer width="100%" height={200}><PieChart>
+                    <Pie data={d.categoryDist || []} cx="50%" cy="50%" innerRadius={40} outerRadius={70} dataKey="count" nameKey="category" paddingAngle={3}
+                        label={({ category, percent }: any) => `${category} ${(percent * 100).toFixed(0)}%`} labelLine={false} fontSize={10}>
+                        {(d.categoryDist || []).map((_: any, i: number) => <Cell key={i} fill={C[i % C.length]} />)}
+                    </Pie><Tooltip content={<Tip />} />
+                </PieChart></ResponsiveContainer>
+            </Card>
+            <Card title="Gender & PWD">
+                <div className="grid grid-cols-2 gap-3">
+                    <div><p className="text-[10px] font-semibold text-gray-400 uppercase text-center mb-1">Gender</p>
+                        <ResponsiveContainer width="100%" height={130}><PieChart><Pie data={d.genderDist || []} cx="50%" cy="50%" innerRadius={22} outerRadius={45} dataKey="count" nameKey="gender" paddingAngle={3}>
+                            {(d.genderDist || []).map((_: any, i: number) => <Cell key={i} fill={C[(i + 2) % C.length]} />)}</Pie><Tooltip content={<Tip />} /></PieChart></ResponsiveContainer>
+                        <div className="flex justify-center gap-2 mt-1">{(d.genderDist || []).map((g: any, i: number) => (<span key={i} className="flex items-center gap-1 text-[9px] text-gray-500"><span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: C[(i + 2) % C.length] }} />{g.gender}</span>))}</div>
                     </div>
-                </ChartCard>
+                    <div><p className="text-[10px] font-semibold text-gray-400 uppercase text-center mb-1">PWD</p>
+                        <ResponsiveContainer width="100%" height={130}><PieChart><Pie data={d.pwdDist || []} cx="50%" cy="50%" innerRadius={22} outerRadius={45} dataKey="count" nameKey="label" paddingAngle={3}>
+                            {(d.pwdDist || []).map((_: any, i: number) => <Cell key={i} fill={i === 0 ? "#6366f1" : "#e5e7eb"} />)}</Pie><Tooltip content={<Tip />} /></PieChart></ResponsiveContainer>
+                        <div className="flex justify-center gap-2 mt-1">{(d.pwdDist || []).map((p: any, i: number) => (<span key={i} className="flex items-center gap-1 text-[9px] text-gray-500"><span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: i === 0 ? "#6366f1" : "#e5e7eb" }} />{p.label}</span>))}</div>
+                    </div>
+                </div>
+            </Card>
+            {/* Score-based — only single exam */}
+            {single && (d.categoryAvgScores?.length || 0) > 0 && <Card title="Performance by Category" sub="Within this exam only" className="lg:col-span-2">
+                <ResponsiveContainer width="100%" height={200}><ComposedChart data={d.categoryAvgScores}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis dataKey="category" fontSize={10} tick={{ fill: "#6B7280" }} /><YAxis yAxisId="l" fontSize={9} tick={{ fill: "#22c55e" }} width={35} /><YAxis yAxisId="r" orientation="right" fontSize={9} tick={{ fill: "#8b5cf6" }} width={35} domain={[0, 100]} />
+                    <Tooltip content={<Tip />} /><Legend wrapperStyle={{ fontSize: 10 }} />
+                    <Bar yAxisId="l" dataKey="avgScore" name="Avg Score" radius={[4, 4, 0, 0]}>{(d.categoryAvgScores || []).map((_: any, i: number) => <Cell key={i} fill={C[i % C.length]} />)}</Bar>
+                    <Line yAxisId="r" type="monotone" dataKey="avgAccuracy" name="Accuracy %" stroke="#8b5cf6" strokeWidth={2.5} dot={{ r: 3 }} />
+                </ComposedChart></ResponsiveContainer>
+            </Card>}
+            {single && (d.genderPerformance?.length || 0) > 0 && <Card title="Gender Performance" sub="Within this exam only">
+                <div className="space-y-2">{d.genderPerformance.map((g: any, i: number) => (
+                    <div key={i} className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
+                        <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: C[(i + 2) % C.length] }} /><span className="text-xs font-semibold text-gray-700">{g.gender}</span><span className="text-[10px] text-gray-400">({g.count.toLocaleString()})</span></div>
+                        <div className="flex items-center gap-3"><span className="text-xs"><span className="text-gray-400">Score: </span><b className="text-gray-900">{g.avgScore}</b></span><span className="text-xs"><span className="text-gray-400">Acc: </span><b className="text-gray-900">{g.avgAccuracy}%</b></span></div>
+                    </div>
+                ))}</div>
+            </Card>}
+            {single && (d.topStatesByScore?.length || 0) > 0 && <Card title="Top States by Avg Score" sub="Min 5 submissions required">
+                <div className="space-y-1.5">{d.topStatesByScore.map((s: any, i: number) => {
+                    const mx = d.topStatesByScore[0]?.avgScore || 1;
+                    return (<div key={i}><div className="flex justify-between text-xs"><span className="font-semibold text-gray-700">{s.state}</span><span className="text-gray-500">{s.avgScore} <span className="text-gray-300">({s.count})</span></span></div>
+                        <div className="h-1 bg-gray-100 rounded-full mt-0.5 overflow-hidden"><div className="h-full rounded-full bg-indigo-400" style={{ width: `${(s.avgScore / mx) * 100}%` }} /></div></div>);
+                })}</div>
+            </Card>}
+        </div>
+    </div>);
+}
 
-                {/* Category Performance */}
-                <ChartCard title="Performance by Category" subtitle="Average score and accuracy per category" className="lg:col-span-2">
-                    {(data.categoryAvgScores?.length || 0) > 0 ? (
-                        <ResponsiveContainer width="100%" height={260}>
-                            <ComposedChart data={data.categoryAvgScores}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                <XAxis dataKey="category" fontSize={11} tick={{ fill: "#6B7280" }} />
-                                <YAxis yAxisId="left" fontSize={10} tick={{ fill: "#34D399" }} width={40} />
-                                <YAxis yAxisId="right" orientation="right" fontSize={10} tick={{ fill: "#A78BFA" }} width={40} domain={[0, 100]} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Legend wrapperStyle={{ fontSize: 10 }} />
-                                <Bar yAxisId="left" dataKey="avgScore" name="Avg Score" radius={[4, 4, 0, 0]}>
-                                    {(data.categoryAvgScores || []).map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                                </Bar>
-                                <Line yAxisId="right" type="monotone" dataKey="avgAccuracy" name="Accuracy %" stroke="#A78BFA" strokeWidth={2.5} dot={{ r: 4 }} />
-                            </ComposedChart>
-                        </ResponsiveContainer>
-                    ) : <EmptyState message="No category performance data." />}
-                </ChartCard>
+// ─── TOP PERFORMERS (3 tabs) ──
+function TopPerformersSection({ d }: { d: any }) {
+    const [perfTab, setPerfTab] = useState<"raw" | "norm" | "pctl">("raw");
+    const tabDefs = [
+        { key: "raw" as const, label: "By Raw Score", data: d.topByRawScore, highlight: "rawScore" },
+        { key: "norm" as const, label: "By Norm. Score", data: d.topByNormScore, highlight: "normalizedScore" },
+        { key: "pctl" as const, label: "By Percentile", data: d.topByPercentile, highlight: "percentile" },
+    ].filter(t => t.data?.length > 0);
+
+    // Auto-select first available tab
+    const activeTab = tabDefs.find(t => t.key === perfTab) || tabDefs[0];
+    const rows = activeTab?.data || [];
+
+    return (<div className="bg-white rounded-xl border border-gray-100 p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-2">
+            <div><h3 className="text-sm font-bold text-gray-800">Top Performers</h3><p className="text-[11px] text-gray-400 mt-0.5">Top 10 candidates ranked by different metrics</p></div>
+            <div className="flex items-center gap-1">
+                {tabDefs.map(t => (
+                    <button key={t.key} onClick={() => setPerfTab(t.key)}
+                        className={cn("px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all",
+                            (activeTab?.key === t.key) ? "bg-gray-900 text-white" : "text-gray-500 hover:bg-gray-50")}>
+                        {t.label}
+                    </button>
+                ))}
             </div>
         </div>
-    );
+        {rows.length > 0 ? <div className="overflow-x-auto"><table className="w-full text-xs">
+            <thead><tr className="text-[10px] text-gray-400 uppercase tracking-wider border-b border-gray-100">
+                <th className="text-left py-2 pr-2">#</th>
+                <th className="text-left py-2 pr-2">Name</th>
+                <th className="text-left py-2 pr-2">Roll No.</th>
+                <th className="text-left py-2 pr-2">Cat</th>
+                <th className="text-left py-2 pr-2">Gender</th>
+                <th className="text-left py-2 pr-2">State</th>
+                <th className={cn("text-right py-2 pr-2", activeTab?.highlight === "rawScore" && "text-indigo-600")}>Raw Score</th>
+                <th className={cn("text-right py-2 pr-2", activeTab?.highlight === "normalizedScore" && "text-indigo-600")}>Norm. Score</th>
+                <th className="text-right py-2 pr-2">Accuracy</th>
+                <th className="text-right py-2 pr-2">Attempted</th>
+                <th className="text-right py-2 pr-2">Correct</th>
+                <th className="text-right py-2 pr-2">Wrong</th>
+                <th className={cn("text-right py-2 pr-2", activeTab?.highlight === "percentile" && "text-indigo-600")}>Percentile</th>
+                <th className="text-right py-2">Rank</th>
+            </tr></thead>
+            <tbody>{rows.map((p: any, i: number) => (
+                <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/50">
+                    <td className="py-2 pr-2"><span className={cn("inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold", i < 3 ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-500")}>{i + 1}</span></td>
+                    <td className="py-2 pr-2 font-semibold text-gray-800 whitespace-nowrap">{p.name}</td>
+                    <td className="py-2 pr-2 text-gray-500 font-mono text-[10px]">{p.rollNumber || "—"}</td>
+                    <td className="py-2 pr-2"><span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded text-[10px] font-semibold">{p.category}</span></td>
+                    <td className="py-2 pr-2 text-gray-600">{p.gender === "M" ? "Male" : p.gender === "F" ? "Female" : p.gender || "—"}</td>
+                    <td className="py-2 pr-2 text-gray-500 truncate max-w-[100px]">{p.state || "—"}</td>
+                    <td className={cn("py-2 pr-2 text-right font-bold", activeTab?.highlight === "rawScore" ? "text-indigo-700 bg-indigo-50/50" : "text-gray-900")}>{p.rawScore}</td>
+                    <td className={cn("py-2 pr-2 text-right font-semibold", activeTab?.highlight === "normalizedScore" ? "text-indigo-700 bg-indigo-50/50" : "text-indigo-600")}>{p.normalizedScore != null ? p.normalizedScore : "—"}</td>
+                    <td className="py-2 pr-2 text-right text-gray-600">{p.accuracy != null ? `${p.accuracy}%` : "—"}</td>
+                    <td className="py-2 pr-2 text-right text-gray-600">{p.attempted ?? "—"}</td>
+                    <td className="py-2 pr-2 text-right text-emerald-600 font-semibold">{p.correct ?? "—"}</td>
+                    <td className="py-2 pr-2 text-right text-red-500">{p.wrong ?? "—"}</td>
+                    <td className={cn("py-2 pr-2 text-right", activeTab?.highlight === "percentile" && "bg-indigo-50/50")}>{p.percentile != null ? <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-bold", activeTab?.highlight === "percentile" ? "bg-indigo-100 text-indigo-700" : "bg-blue-50 text-blue-700")}>{p.percentile}%</span> : <span className="text-gray-400">—</span>}</td>
+                    <td className="py-2 text-right font-bold text-gray-700">{p.rank || "—"}</td>
+                </tr>
+            ))}</tbody>
+        </table></div> : <Empty msg="No data for this ranking." />}
+    </div>);
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────
-function getUniqueExams(data: any[]): string[] {
-    return [...new Set(data.map((d: any) => d.examName))];
-}
-
-function transformPopularity(raw: any[]): any[] {
-    const byDate: Record<string, any> = {};
-    raw.forEach((item: any) => {
-        if (!byDate[item.date]) byDate[item.date] = { date: item.date };
-        byDate[item.date][item.examName] = item.count;
-    });
-    return Object.values(byDate);
+// ── helpers ──
+function getUniq(d: any[]): string[] { return [...new Set(d.map(x => x.examName))]; }
+function transformPop(raw: any[]): any[] {
+    const m: Record<string, any> = {};
+    raw.forEach(r => { if (!m[r.date]) m[r.date] = { date: r.date }; m[r.date][r.examName] = r.count; });
+    return Object.values(m);
 }

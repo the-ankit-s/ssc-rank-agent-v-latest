@@ -62,6 +62,15 @@ export const confidenceLevelEnum = pgEnum("confidence_level", [
   "high",
 ]);
 
+export const normalizationMethodEnum = pgEnum("normalization_method", [
+  "z_score",
+  "percentile",
+  "modified_z",
+  "equating",
+  "raw",
+  "custom",
+]);
+
 export const auditActionEnum = pgEnum("audit_action", [
   "create",
   "update",

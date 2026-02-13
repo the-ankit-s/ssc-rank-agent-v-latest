@@ -2,191 +2,261 @@
 
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import {
+    Trophy, Users, Target, Award, ChevronLeft, ChevronRight,
+    Download, RefreshCw, ArrowUpDown, Medal, Crosshair, TrendingUp, BarChart3,
+    Gauge
+} from "lucide-react";
+import { useLeaderboard, LeaderboardEntry, LeaderboardStats } from "@/hooks/admin/use-admin";
+import { useExamOptions } from "@/hooks/admin/use-submissions";
 
-interface LeaderboardEntry {
-    rank: number;
-    rollNumber: string;
-    name: string;
-    category: string;
-    rawScore: number;
-    normalizedScore: number;
-    accuracy: number;
-    shiftCode: string;
+// ─── Shared primitives ───
+function Kpi({ label, value, icon: I, color, bg }: any) {
+    return (
+        <div className="bg-white rounded-xl border border-gray-100 p-4 flex items-start gap-3">
+            <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5", bg)}>
+                <I className={cn("w-4 h-4", color)} />
+            </div>
+            <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{label}</p>
+                <p className="text-lg font-bold text-gray-900">{typeof value === "number" ? value.toLocaleString() : value}</p>
+            </div>
+        </div>
+    );
 }
 
-interface Exam {
-    id: number;
-    name: string;
+function Empty({ msg }: { msg: string }) {
+    return (
+        <div className="bg-white rounded-xl border border-gray-100 p-10 text-center">
+            <BarChart3 className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+            <p className="text-xs font-semibold text-gray-400">{msg}</p>
+        </div>
+    );
 }
 
 export default function LeaderboardPage() {
-    const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
-    const [exams, setExams] = useState<Exam[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [selectedExam, setSelectedExam] = useState<string>("");
+    // State
+    const [examId, setExamId] = useState<string>("");
     const [category, setCategory] = useState("all");
+    const [sort, setSort] = useState("rawScore");
+    const [page, setPage] = useState(1);
 
-    // Mock Data Fetching for Demo
+    // Queries
+    const { data: examsData } = useExamOptions();
+    const exams = examsData || [];
+
+    const { data, isLoading, refetch } = useLeaderboard({ examId, category, sort }, page);
+
+    // Destructure data
+    const rows: LeaderboardEntry[] = data?.leaderboard || [];
+    const stats: LeaderboardStats | undefined = data?.stats;
+    const pagination = data?.pagination || { page: 1, limit: 50, totalPages: 1, total: 0, hasMore: false };
+    const currentExamName = data?.currentExamName || "Leaderboard";
+    const currentExamId = data?.currentExamId;
+
+    // Effect to parse currentExamId if not set
+    // Only set if we don't have an examId and the API returns one (initial load)
     useEffect(() => {
-        // Mock Exams
-        setExams([
-            { id: 1, name: "JEE Main 2024 - Session 1" },
-            { id: 2, name: "NEET UG 2024" },
-        ]);
-        setSelectedExam("1");
-    }, []);
+        if (!examId && currentExamId) {
+            setExamId(String(currentExamId));
+        }
+    }, [examId, currentExamId]);
 
+    // Reset page on filter change
     useEffect(() => {
-        if (!selectedExam) return;
-        setLoading(true);
-        // Simulate API call
-        setTimeout(() => {
-            const mockEntries = Array.from({ length: 15 }).map((_, i) => ({
-                rank: i + 1,
-                rollNumber: `240${1000 + i}`,
-                name: ["Aarav Patel", "Vihaan Singh", "Aditya Kumar", "Sai Krishna", "Ishaan Gupta"][i % 5] + ` ${i + 1}`,
-                category: ["UR", "OBC", "EWS", "SC", "ST"][i % 5],
-                rawScore: 280 - (i * 5),
-                normalizedScore: 99.8 - (i * 0.1),
-                accuracy: 92 - i,
-                shiftCode: `27Jan-S${(i % 2) + 1}`
-            }));
-            setEntries(mockEntries);
-            setLoading(false);
-        }, 800);
-    }, [selectedExam, category]);
+        setPage(1);
+    }, [examId, category, sort]);
 
-    const getMedalColor = (rank: number) => {
-        switch (rank) {
-            case 1: return "bg-yellow-300 text-black border-2 border-black shadow-neo-sm";
-            case 2: return "bg-gray-300 text-black border-2 border-black shadow-neo-sm";
-            case 3: return "bg-orange-400 text-black border-2 border-black shadow-neo-sm";
-            default: return "bg-white text-black border-2 border-black shadow-sm";
-        }
-    };
+    const sortOptions = [
+        { key: "rawScore", label: "Raw Score" },
+        { key: "normalizedScore", label: "Normalized Score" },
+        { key: "overallPercentile", label: "Percentile" },
+        { key: "accuracy", label: "Accuracy" },
+    ];
 
-    const getRankIcon = (rank: number) => {
-        switch (rank) {
-            case 1: return <span className="material-symbols-outlined text-black text-2xl">emoji_events</span>;
-            case 2: return <span className="material-symbols-outlined text-black text-2xl">emoji_events</span>;
-            case 3: return <span className="material-symbols-outlined text-black text-2xl">emoji_events</span>;
-            default: return <span className="font-black text-sm text-black">#{rank}</span>;
-        }
+    const exportCSV = () => {
+        if (!rows.length) return;
+        const headers = ["Rank", "Name", "Roll No.", "Category", "Gender", "State", "Raw Score", "Norm. Score", "Accuracy", "Percentile", "Attempted", "Correct", "Wrong", "Overall Rank"];
+        const csvRows = rows.map((r) => [
+            r.displayRank, r.name, r.rollNumber, r.category, r.gender, r.state || "",
+            r.rawScore, r.normalizedScore ?? "", r.accuracy ? `${r.accuracy}%` : "",
+            r.overallPercentile ?? "", r.totalAttempted ?? "", r.totalCorrect ?? "", r.totalWrong ?? "",
+            r.overallRank ?? "",
+        ].join(","));
+        const blob = new Blob([headers.join(",") + "\n" + csvRows.join("\n")], { type: "text/csv" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `leaderboard_${examId || "all"}_p${page}.csv`;
+        a.click();
     };
 
     return (
-        <div className="space-y-8">
+        <div className="space-y-4 max-w-[1400px] mx-auto">
             {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-4xl font-black text-black tracking-tighter uppercase transform -skew-x-6 inline-block bg-yellow-300 px-3 py-1 border-2 border-black shadow-neo">Leaderboard</h1>
-                    <p className="text-lg font-bold text-black mt-2">Top performing candidates</p>
+                    <div className="flex items-center gap-2">
+                        <Trophy className="w-5 h-5 text-amber-500" />
+                        <h1 className="text-lg font-bold text-gray-900">Leaderboard</h1>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-0.5 ml-7">{currentExamName}</p>
                 </div>
-                <div className="flex gap-2">
-                    <button className="flex items-center gap-2 px-6 py-3 bg-white text-black font-black uppercase tracking-wide border-2 border-black shadow-neo hover:bg-blue-300 hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px] transition-all text-sm">
-                        <span className="material-symbols-outlined text-xl">download</span>
-                        Export List
+                <div className="flex items-center gap-2">
+                    <button onClick={() => refetch()} className="p-2 rounded-lg hover:bg-gray-100 transition-colors" title="Refresh">
+                        <RefreshCw className={cn("w-4 h-4 text-gray-500", isLoading && "animate-spin")} />
+                    </button>
+                    <button onClick={exportCSV} className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white rounded-lg text-xs font-semibold hover:bg-gray-800 transition-colors">
+                        <Download className="w-3.5 h-3.5" />Export
                     </button>
                 </div>
             </div>
 
-            {/* Filters */}
-            <div className="bg-white p-4 border-4 border-black shadow-neo flex flex-col md:flex-row gap-4">
-                <div className="flex-1 relative">
-                    <select
-                        value={selectedExam}
-                        onChange={(e) => setSelectedExam(e.target.value)}
-                        className="w-full px-4 py-3 text-sm font-black uppercase tracking-wide border-2 border-black bg-white focus:outline-none focus:bg-yellow-100 text-black cursor-pointer transition-all appearance-none"
-                    >
-                        {exams.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                    </select>
-                    <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-black pointer-events-none">
-                        expand_more
-                    </span>
-                </div>
-                <div className="w-full md:w-48 relative">
-                    <select
-                        value={category}
-                        onChange={(e) => setCategory(e.target.value)}
-                        className="w-full px-4 py-3 text-sm font-black uppercase tracking-wide border-2 border-black bg-white focus:outline-none focus:bg-yellow-100 text-black cursor-pointer transition-all appearance-none"
-                    >
-                        <option value="all">All Categories</option>
-                        <option value="UR">UR</option>
-                        <option value="OBC">OBC</option>
-                        <option value="EWS">EWS</option>
-                        <option value="SC">SC</option>
-                        <option value="ST">ST</option>
-                    </select>
-                    <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-black pointer-events-none">
-                        expand_more
-                    </span>
+            {/* Controls row */}
+            <div className="flex flex-wrap items-center gap-2">
+                {/* Exam selector */}
+                <select value={examId} onChange={e => setExamId(e.target.value)}
+                    className="h-8 px-3 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-300 cursor-pointer min-w-[200px]">
+                    <option value="" disabled>Select Exam</option>
+                    {exams.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </select>
+                {/* Category filter */}
+                <select value={category} onChange={e => setCategory(e.target.value)}
+                    className="h-8 px-3 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-300 cursor-pointer">
+                    <option value="all">All Categories</option>
+                    <option value="GEN">GEN</option>
+                    <option value="OBC">OBC</option>
+                    <option value="EWS">EWS</option>
+                    <option value="SC">SC</option>
+                    <option value="ST">ST</option>
+                </select>
+                {/* Sort selector */}
+                <div className="flex items-center gap-1 ml-auto">
+                    <ArrowUpDown className="w-3.5 h-3.5 text-gray-400" />
+                    <span className="text-[10px] text-gray-400 font-semibold uppercase">Sort by:</span>
+                    {sortOptions.map(s => (
+                        <button key={s.key} onClick={() => setSort(s.key)}
+                            className={cn("px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all",
+                                sort === s.key ? "bg-gray-900 text-white" : "text-gray-500 hover:bg-gray-50")}>
+                            {s.label}
+                        </button>
+                    ))}
                 </div>
             </div>
 
-            {/* Leaderboard Table */}
-            <div className="bg-white border-4 border-black shadow-neo overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                        <thead className="bg-blue-300 text-black font-black text-sm uppercase tracking-wider border-b-4 border-black">
-                            <tr>
-                                <th className="p-6 pl-8 w-24 text-center border-r-2 border-black">Rank</th>
-                                <th className="p-6 border-r-2 border-black">Candidate</th>
-                                <th className="p-6 border-r-2 border-black">Category</th>
-                                <th className="p-6 text-center border-r-2 border-black">Shift</th>
-                                <th className="p-6 text-right border-r-2 border-black">Norm. Score</th>
-                                <th className="p-6 text-right pr-8">Raw Score</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y-2 divide-black">
-                            {loading ? (
-                                <tr>
-                                    <td colSpan={6} className="p-12 text-center">
-                                        <div className="flex justify-center">
-                                            <span className="material-symbols-outlined text-4xl text-black animate-spin">autorenew</span>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ) : entries.length === 0 ? (
-                                <tr>
-                                    <td colSpan={6} className="p-12 text-center text-black font-black uppercase text-lg">
-                                        No data available for selected filters.
-                                    </td>
-                                </tr>
-                            ) : (
-                                entries.map((entry) => (
-                                    <tr key={entry.rollNumber} className="hover:bg-yellow-100 transition-colors group">
-                                        <td className="p-4 pl-8 text-center border-r-2 border-black">
-                                            <div className={`flex items-center justify-center w-12 h-12 rounded-none mx-auto transition-transform group-hover:scale-105 ${getMedalColor(entry.rank)}`}>
-                                                {getRankIcon(entry.rank)}
-                                            </div>
-                                        </td>
-                                        <td className="p-6 border-r-2 border-black">
-                                            <div className="font-black text-black text-base uppercase">{entry.name}</div>
-                                            <div className="text-xs text-gray-600 font-mono mt-0.5 font-bold">{entry.rollNumber}</div>
-                                        </td>
-                                        <td className="p-6 border-r-2 border-black">
-                                            <span className="px-2.5 py-1 text-black bg-white text-xs font-black uppercase tracking-wide border-2 border-black shadow-neo-sm">
-                                                {entry.category}
-                                            </span>
-                                        </td>
-                                        <td className="p-6 text-center border-r-2 border-black">
-                                            <span className="font-mono text-sm font-black text-black bg-gray-100 px-2 py-1 border-2 border-black">
-                                                {entry.shiftCode}
-                                            </span>
-                                        </td>
-                                        <td className="p-6 text-right border-r-2 border-black">
-                                            <div className="font-mono font-black text-lg text-blue-600 bg-blue-50 px-2 py-1 inline-block border-2 border-black shadow-sm transform -skew-x-6">{entry.normalizedScore.toFixed(2)}</div>
-                                        </td>
-                                        <td className="p-6 text-right pr-8">
-                                            <span className="font-mono font-bold text-gray-600">{entry.rawScore.toFixed(2)}</span>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
+            {/* Stats bar */}
+            {stats && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                    <Kpi label="Total Candidates" value={stats.total} icon={Users} color="text-indigo-600" bg="bg-indigo-50" />
+                    <Kpi label="Avg Raw Score" value={stats.avgRawScore} icon={Target} color="text-emerald-600" bg="bg-emerald-50" />
+                    <Kpi label="Avg Norm. Score" value={stats.avgNormScore ?? "—"} icon={TrendingUp} color="text-blue-600" bg="bg-blue-50" />
+                    <Kpi label="Avg Accuracy" value={stats.avgAccuracy ? `${stats.avgAccuracy}%` : "—"} icon={Crosshair} color="text-violet-600" bg="bg-violet-50" />
+                    <Kpi label="Highest Score" value={stats.maxRawScore} icon={Award} color="text-amber-600" bg="bg-amber-50" />
+                    <Kpi label="Lowest Score" value={stats.minRawScore} icon={Gauge} color="text-red-500" bg="bg-red-50" />
                 </div>
-            </div>
+            )}
+
+            {/* Main table */}
+            {isLoading ? (
+                <div className="bg-white rounded-xl border border-gray-100 p-16 flex flex-col items-center gap-3">
+                    <RefreshCw className="w-6 h-6 text-gray-300 animate-spin" />
+                    <p className="text-xs font-semibold text-gray-400">Loading leaderboard…</p>
+                </div>
+            ) : rows.length === 0 ? (
+                <Empty msg="No results found for the selected filters." />
+            ) : (
+                <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                            <thead>
+                                <tr className="text-[10px] text-gray-400 uppercase tracking-wider border-b border-gray-100 bg-gray-50/50">
+                                    <th className="text-center py-3 px-3 w-14">#</th>
+                                    <th className="text-left py-3 pr-3">Name</th>
+                                    <th className="text-left py-3 pr-3">Roll No.</th>
+                                    <th className="text-left py-3 pr-3">Cat</th>
+                                    <th className="text-left py-3 pr-3">Gender</th>
+                                    <th className="text-left py-3 pr-3">State</th>
+                                    <th className={cn("text-right py-3 pr-3", sort === "rawScore" && "text-indigo-600")}>Raw Score</th>
+                                    <th className={cn("text-right py-3 pr-3", sort === "normalizedScore" && "text-indigo-600")}>Norm. Score</th>
+                                    <th className={cn("text-right py-3 pr-3", sort === "accuracy" && "text-indigo-600")}>Accuracy</th>
+                                    <th className="text-right py-3 pr-3">Attempted</th>
+                                    <th className="text-right py-3 pr-3">Correct</th>
+                                    <th className="text-right py-3 pr-3">Wrong</th>
+                                    <th className={cn("text-right py-3 pr-3", sort === "overallPercentile" && "text-indigo-600")}>Percentile</th>
+                                    <th className="text-right py-3 pr-3">Rank</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((r, i) => {
+                                    const isTop3 = r.displayRank <= 3;
+                                    return (
+                                        <tr key={r.id || i} className={cn("border-b border-gray-50 hover:bg-gray-50/50 transition-colors", isTop3 && "bg-amber-50/30")}>
+                                            <td className="py-2.5 px-3 text-center">
+                                                <span className={cn("inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold",
+                                                    r.displayRank === 1 ? "bg-amber-200 text-amber-900" :
+                                                        r.displayRank === 2 ? "bg-gray-200 text-gray-700" :
+                                                            r.displayRank === 3 ? "bg-orange-200 text-orange-800" :
+                                                                "bg-gray-100 text-gray-500"
+                                                )}>
+                                                    {r.displayRank <= 3 ? <Medal className="w-3 h-3" /> : r.displayRank}
+                                                </span>
+                                            </td>
+                                            <td className="py-2.5 pr-3 font-semibold text-gray-800 whitespace-nowrap">{r.name}</td>
+                                            <td className="py-2.5 pr-3 text-gray-500 font-mono text-[10px]">{r.rollNumber}</td>
+                                            <td className="py-2.5 pr-3"><span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded text-[10px] font-semibold">{r.category}</span></td>
+                                            <td className="py-2.5 pr-3 text-gray-600">{r.gender === "M" ? "Male" : r.gender === "F" ? "Female" : r.gender || "—"}</td>
+                                            <td className="py-2.5 pr-3 text-gray-500 truncate max-w-[100px]">{r.state || "—"}</td>
+                                            <td className={cn("py-2.5 pr-3 text-right font-bold", sort === "rawScore" ? "text-indigo-700" : "text-gray-900")}>{r.rawScore}</td>
+                                            <td className={cn("py-2.5 pr-3 text-right font-semibold", sort === "normalizedScore" ? "text-indigo-700" : "text-indigo-600")}>{r.normalizedScore != null ? r.normalizedScore : "—"}</td>
+                                            <td className={cn("py-2.5 pr-3 text-right", sort === "accuracy" ? "font-bold text-indigo-700" : "text-gray-600")}>{r.accuracy != null ? `${r.accuracy}%` : "—"}</td>
+                                            <td className="py-2.5 pr-3 text-right text-gray-600">{r.totalAttempted ?? "—"}</td>
+                                            <td className="py-2.5 pr-3 text-right text-emerald-600 font-semibold">{r.totalCorrect ?? "—"}</td>
+                                            <td className="py-2.5 pr-3 text-right text-red-500">{r.totalWrong ?? "—"}</td>
+                                            <td className={cn("py-2.5 pr-3 text-right", sort === "overallPercentile" && "font-bold")}>
+                                                {r.overallPercentile != null
+                                                    ? <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-bold", sort === "overallPercentile" ? "bg-indigo-100 text-indigo-700" : "bg-blue-50 text-blue-700")}>{r.overallPercentile}%</span>
+                                                    : <span className="text-gray-400">—</span>}
+                                            </td>
+                                            <td className="py-2.5 pr-3 text-right font-bold text-gray-700">{r.overallRank || "—"}</td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {/* Pagination */}
+                    {pagination.totalPages > 1 && (
+                        <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 bg-gray-50/30">
+                            <p className="text-[11px] text-gray-400 font-semibold">
+                                Showing <b className="text-gray-700">{(pagination.page - 1) * pagination.limit + 1}–{Math.min(pagination.page * pagination.limit, pagination.total)}</b> of <b className="text-gray-700">{pagination.total.toLocaleString()}</b> candidates
+                            </p>
+                            <div className="flex items-center gap-1">
+                                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+                                    className={cn("p-1.5 rounded-lg transition-colors", page <= 1 ? "text-gray-300 cursor-not-allowed" : "text-gray-600 hover:bg-gray-100")}>
+                                    <ChevronLeft className="w-4 h-4" />
+                                </button>
+                                {/* Page numbers */}
+                                {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
+                                    const start = Math.max(1, Math.min(page - 2, pagination.totalPages - 4));
+                                    const p = start + i;
+                                    if (p > pagination.totalPages) return null;
+                                    return (
+                                        <button key={p} onClick={() => setPage(p)}
+                                            className={cn("w-7 h-7 rounded-lg text-[11px] font-bold transition-all",
+                                                page === p ? "bg-gray-900 text-white" : "text-gray-500 hover:bg-gray-100")}>
+                                            {p}
+                                        </button>
+                                    );
+                                })}
+                                <button onClick={() => setPage(p => Math.min(pagination.totalPages, p + 1))} disabled={!pagination.hasMore}
+                                    className={cn("p-1.5 rounded-lg transition-colors", !pagination.hasMore ? "text-gray-300 cursor-not-allowed" : "text-gray-600 hover:bg-gray-100")}>
+                                    <ChevronRight className="w-4 h-4" />
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }

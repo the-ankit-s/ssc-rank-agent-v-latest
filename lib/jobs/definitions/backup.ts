@@ -2,41 +2,63 @@
 import { db } from "@/lib/db";
 import { jobRuns } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
+import { JobContext } from "../helpers";
 
+/**
+ * Database Backup Job
+ * Creates a manifest of all tables with their row counts,
+ * serving as a snapshot summary. A real production deployment
+ * would invoke pg_dump here.
+ */
 export async function performBackup(jobId: number, metadata?: any) {
-    await updateProgress(jobId, 10, "Starting database backup...");
+    const ctx = new JobContext(jobId);
+    await ctx.updateProgress(10, "Enumerating tables…");
 
-    // Simulate backup creation (in production, this would call pg_dump or similar)
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    // Get all user tables and their row counts
+    const tables = await db.execute(sql`
+        SELECT 
+            relname as table_name,
+            n_live_tup as row_count
+        FROM pg_stat_user_tables
+        ORDER BY n_live_tup DESC;
+    `) as unknown as Array<{ table_name: string; row_count: number }>;
 
-    await updateProgress(jobId, 40, "Exporting tables...");
+    const tableList = Array.isArray(tables) ? tables : [];
+    await ctx.setTotal(tableList.length);
+    await ctx.updateProgress(30, `Found ${tableList.length} tables, building manifest…`);
 
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    const manifest: Record<string, number> = {};
+    let totalRows = 0;
 
-    await updateProgress(jobId, 70, "Compressing backup...");
-
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    for (let i = 0; i < tableList.length; i++) {
+        const t = tableList[i];
+        manifest[t.table_name] = Number(t.row_count) || 0;
+        totalRows += Number(t.row_count) || 0;
+        await ctx.incrementProcessed(1);
+    }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `backup_manifest_${timestamp}.json`;
+
+    await ctx.updateProgress(80, "Storing backup manifest…");
+
+    // Store the manifest in job metadata
     await db
         .update(jobRuns)
         .set({
             progressPercent: 100,
-            metadata: sql`jsonb_set(COALESCE(metadata, '{}'::jsonb), '{result}', ${JSON.stringify({
-                message: "Backup complete",
-                filename: `backup_${timestamp}.sql.gz`,
+            metadata: sql`jsonb_set(
+                COALESCE(metadata, '{}'::jsonb),
+                '{result}',
+                ${JSON.stringify({
+                message: `Backup manifest created: ${tableList.length} tables, ${totalRows.toLocaleString()} total rows`,
+                filename,
                 timestamp,
-            })}::jsonb)`
-        })
-        .where(eq(jobRuns.id, jobId));
-}
-
-async function updateProgress(jobId: number, percent: number, message: string) {
-    await db
-        .update(jobRuns)
-        .set({
-            progressPercent: percent,
-            metadata: sql`jsonb_set(COALESCE(metadata, '{}'::jsonb), '{result}', ${JSON.stringify({ message })}::jsonb)`
+                tableCount: tableList.length,
+                totalRows,
+                tables: manifest,
+            })}::jsonb
+            )`,
         })
         .where(eq(jobRuns.id, jobId));
 }

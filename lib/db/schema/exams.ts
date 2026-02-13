@@ -18,6 +18,7 @@ import {
   categoryEnum,
   genderEnum,
   confidenceLevelEnum,
+  normalizationMethodEnum,
 } from "./enums";
 import type { SectionConfig, SectionPerformance, PercentileCutoffs } from "./interfaces";
 import { adminUsers } from "./admin";
@@ -56,6 +57,16 @@ export const exams = pgTable(
     hasSectionalTiming: boolean("has_sectional_timing").default(false),
     hasNormalization: boolean("has_normalization").default(true),
     allowMultipleSubmissions: boolean("allow_multiple_submissions").default(false),
+
+    // Normalization Configuration
+    normalizationMethod: normalizationMethodEnum("normalization_method").default("z_score"),
+    normalizationConfig: jsonb("normalization_config").$type<{
+      targetMean?: number;
+      targetStdDev?: number;
+      maxNormalizedScore?: number;
+      minNormalizedScore?: number;
+      customParams?: Record<string, number>;
+    }>(),
 
     // Status & Phases
     isActive: boolean("is_active").default(true),
@@ -300,6 +311,9 @@ export const cutoffs = pgTable(
     isPublished: boolean("is_published").default(false),
     publishedAt: timestamp("published_at"),
     publishedBy: integer("published_by").references(() => adminUsers.id),
+
+    // Display
+    priorityOrder: integer("priority_order").default(0),
 
     // Timestamps
     createdAt: timestamp("created_at").defaultNow(),

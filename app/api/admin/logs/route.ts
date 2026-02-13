@@ -1,35 +1,75 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { systemLogs } from "@/lib/db/schema";
-import { desc, sql } from "drizzle-orm";
+import { desc, and, eq, gte, lte, ilike, sql } from "drizzle-orm";
 
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
+
+        // Pagination
+        const page = parseInt(searchParams.get("page") || "1");
         const limit = parseInt(searchParams.get("limit") || "50");
+        const offset = (page - 1) * limit;
+
+        // Filters
         const level = searchParams.get("level");
+        const component = searchParams.get("component");
+        const action = searchParams.get("action");
+        const search = searchParams.get("search");
+        const startDate = searchParams.get("startDate");
+        const endDate = searchParams.get("endDate");
 
-        let query = db.select().from(systemLogs).orderBy(desc(systemLogs.timestamp)).limit(limit);
+        // Build where conditions
+        const conditions: any[] = [];
 
-        if (level && level !== "all") {
-            // query = query.where(eq(systemLogs.level, level as any)); 
-            // Note: Drizzle dynamic where is tricky without QueryBuilder, skipping for simplicity of demo
+        if (level && level !== "" && level !== "all") {
+            conditions.push(eq(systemLogs.level, level as any));
+        }
+        if (component && component !== "") {
+            conditions.push(eq(systemLogs.component, component));
+        }
+        if (action && action !== "") {
+            conditions.push(ilike(systemLogs.action, `%${action}%`));
+        }
+        if (search && search !== "") {
+            conditions.push(ilike(systemLogs.message, `%${search}%`));
+        }
+        if (startDate && startDate !== "") {
+            conditions.push(gte(systemLogs.timestamp, new Date(startDate)));
+        }
+        if (endDate && endDate !== "") {
+            conditions.push(lte(systemLogs.timestamp, new Date(endDate)));
         }
 
-        const logs = await query;
+        const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-        // Get stats
-        const stats = {
-            info: 0,
-            warn: 0,
-            error: 0,
-            debug: 0
-        };
+        // Fetch logs
+        const logs = await db
+            .select()
+            .from(systemLogs)
+            .where(whereClause)
+            .orderBy(desc(systemLogs.timestamp))
+            .limit(limit)
+            .offset(offset);
 
-        // In a real app, use count() queries. For now simple filtering
-        // const counts = await db.select({ level: systemLogs.level, count: count() }).from(systemLogs).groupBy(systemLogs.level);
+        // Fetch total count for pagination
+        const [{ count }] = await db
+            .select({ count: sql<number>`count(*)` })
+            .from(systemLogs)
+            .where(whereClause);
 
-        return NextResponse.json({ logs, stats });
+        const total = Number(count);
+
+        return NextResponse.json({
+            logs,
+            pagination: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit),
+            },
+        });
     } catch (error) {
         console.error("Error fetching logs:", error);
         return NextResponse.json({ error: "Failed to fetch logs" }, { status: 500 });

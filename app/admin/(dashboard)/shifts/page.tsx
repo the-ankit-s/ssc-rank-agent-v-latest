@@ -1,356 +1,487 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import Link from "next/link";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import {
+    BarChart3, Users, TrendingUp, TrendingDown, Activity, Gauge,
+    ChevronDown, ChevronUp, RefreshCw, Calendar, Clock, Hash,
+    ArrowUpDown, Info, Zap, Target, Scale, Layers,
+    AlertTriangle, CheckCircle2,
+} from "lucide-react";
+import { DifficultyBadge } from "@/components/admin/tags";
+import { useExamOptions } from "@/hooks/admin/use-submissions";
+import { useShifts } from "@/hooks/admin/use-shifts";
+
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 interface Shift {
     id: number;
+    examId: number;
     shiftCode: string;
     date: string;
+    shiftNumber: number;
+    timeSlot: string;
     startTime: string;
     endTime: string;
     examName: string;
-    timeSlot: string;
+    totalMarks: number | null;
     candidateCount: number;
-    avgRawScore?: number;
-    difficultyLabel?: string;
+    avgRawScore: number | null;
+    medianRawScore: number | null;
+    stdDev: number | null;
+    maxRawScore: number | null;
+    minRawScore: number | null;
+    difficultyIndex: number | null;
+    difficultyLabel: string | null;
+    normalizationFactor: number | null;
+    sectionStats: Record<string, { avgScore: number; maxScore: number; avgAccuracy: number }> | null;
+    statsUpdatedAt: string | null;
 }
 
-interface Pagination {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
+interface Summary {
+    totalShifts: number;
+    totalCandidates: number;
+    examAvgScore: number | null;
+    scoreRange: { min: number | null; max: number | null };
+    avgStdDev: number | null;
+    normFactorRange: { min: number | null; max: number | null };
+    difficultyDistribution: { easy: number; moderate: number; hard: number };
+    totalMarks: number | null;
 }
 
-interface ExamOption {
-    id: number;
-    name: string;
+interface Pagination { total: number; page: number; limit: number; totalPages: number; }
+interface ExamOption { id: number; name: string; tier?: string; year?: number; }
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+const fmt = (n: number | null | undefined, d = 1) => n != null ? n.toFixed(d) : "—";
+const fmtInt = (n: number | null | undefined) => n != null ? n.toLocaleString() : "—";
+
+
+
+function ScoreBar({ value, max, color = "bg-violet-500" }: { value: number; max: number; color?: string }) {
+    const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
+    return (
+        <div className="flex items-center gap-2 w-full">
+            <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                <div className={cn("h-full rounded-full transition-all", color)} style={{ width: `${pct}%` }} />
+            </div>
+            <span className="text-xs font-bold text-gray-700 w-12 text-right">{fmt(value, 1)}</span>
+        </div>
+    );
 }
+
+function StatCard({ icon: Icon, label, value, sub, color = "bg-white" }: {
+    icon: any; label: string; value: string | number; sub?: string; color?: string;
+}) {
+    return (
+        <div className={cn("rounded-2xl border border-gray-200 p-4 flex flex-col gap-1", color)}>
+            <div className="flex items-center gap-2 text-gray-500">
+                <Icon className="w-4 h-4" />
+                <span className="text-[11px] font-bold uppercase tracking-wider">{label}</span>
+            </div>
+            <p className="text-2xl font-black text-gray-900 tracking-tight">{value}</p>
+            {sub && <p className="text-[11px] text-gray-400 font-medium">{sub}</p>}
+        </div>
+    );
+}
+
+// ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function ShiftsPage() {
-    // State
-    const [shifts, setShifts] = useState<Shift[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [pagination, setPagination] = useState<Pagination>({ total: 0, page: 1, limit: 10, totalPages: 1 });
-    const [selectedIds, setSelectedIds] = useState<number[]>([]);
-    const [exams, setExams] = useState<ExamOption[]>([]);
+    const [selectedExam, setSelectedExam] = useState<string>("");
+    const [page, setPage] = useState(1);
+    const [limit] = useState(50);
+    const [sorting, setSorting] = useState({ field: "date", order: "asc" });
+    const [expandedShift, setExpandedShift] = useState<number | null>(null);
 
-    // Filters & Sorting
-    const [filters, setFilters] = useState({
-        examId: "all",
-        dateFrom: "",
-        dateTo: "",
-        timeSlot: "all",
-        difficulty: "all"
-    });
-    const [sorting, setSorting] = useState({ field: "date", order: "desc" });
+    // React Query hooks
+    const { data: examOptionsRaw } = useExamOptions();
+    const exams = (examOptionsRaw || []) as ExamOption[];
 
-    // Fetch Exams for Filter
+    // Auto-select first active exam
     useEffect(() => {
-        fetch("/api/admin/exams?limit=100") // Fetch enough exams for dropdown
-            .then(res => res.json())
-            .then(data => {
-                if (data.exams) setExams(data.exams);
-            });
-    }, []);
-
-    // Fetch Shifts
-    const fetchShifts = useCallback(async () => {
-        setLoading(true);
-        const params = new URLSearchParams({
-            page: pagination.page.toString(),
-            limit: pagination.limit.toString(),
-            sort: sorting.field,
-            order: sorting.order,
-            ...filters
-        });
-
-        try {
-            const res = await fetch(`/api/admin/shifts?${params}`);
-            const data = await res.json();
-            if (data.shifts) {
-                setShifts(data.shifts);
-                setPagination(prev => ({ ...prev, ...data.pagination }));
-            }
-        } catch (error) {
-            console.error("Failed to fetch shifts", error);
-        } finally {
-            setLoading(false);
+        if (exams.length > 0 && !selectedExam) {
+            setSelectedExam(String(exams[0].id));
         }
-    }, [pagination.page, pagination.limit, sorting, filters]);
+    }, [exams, selectedExam]);
 
-    // Initial Fetch & Debounce
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            fetchShifts();
-        }, 300);
-        return () => clearTimeout(timer);
-    }, [fetchShifts]);
+    const { data: shiftsData, isLoading: loading } = useShifts(selectedExam, sorting, page, limit);
+    const shifts = shiftsData?.shifts || [];
+    const summary = shiftsData?.summary || null;
+    const pagination = shiftsData?.pagination || { total: 0, page: 1, limit: 50, totalPages: 1 };
 
-    // Handlers
     const handleSort = (field: string) => {
-        setSorting(prev => ({
-            field,
-            order: prev.field === field && prev.order === "asc" ? "desc" : "asc"
-        }));
+        setSorting(prev => ({ field, order: prev.field === field && prev.order === "asc" ? "desc" : "asc" }));
     };
 
-    const handleSelectAll = (checked: boolean) => {
-        setSelectedIds(checked ? shifts.map(s => s.id) : []);
-    };
+    const SortIcon = ({ field }: { field: string }) => (
+        sorting.field === field ? (
+            sorting.order === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+        ) : <ArrowUpDown className="w-3 h-3 text-gray-300" />
+    );
 
-    const handleSelectRow = (id: number, checked: boolean) => {
-        setSelectedIds(prev => checked ? [...prev, id] : prev.filter(i => i !== id));
-    };
-
-    const handleBulkAction = async (action: 'delete' | 'recalculate') => {
-        if (!confirm(`Are you sure you want to ${action} ${selectedIds.length} shifts?`)) return;
-
-        try {
-            const endpoint = action === 'delete'
-                ? "/api/admin/shifts/bulk-delete"
-                : "/api/admin/shifts/bulk-recalculate";
-
-            await fetch(endpoint, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ids: selectedIds })
-            });
-            fetchShifts();
-            setSelectedIds([]);
-        } catch (e) {
-            alert("Bulk action failed");
-        }
-    };
+    // Compute relative bars
+    const maxAvg = Math.max(...shifts.map(s => s.avgRawScore || 0), 1);
+    const maxCandidates = Math.max(...shifts.map(s => s.candidateCount || 0), 1);
+    const totalMarks = summary?.totalMarks || maxAvg;
 
     return (
         <div className="space-y-6 max-w-[1600px] mx-auto pb-10">
             {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Shift Management</h1>
-                    <p className="text-gray-500 font-medium mt-1">Manage exam timings, slots, and statistics.</p>
+                    <h1 className="text-3xl font-black text-gray-900 tracking-tight">Shift Analytics</h1>
+                    <p className="text-gray-500 font-medium mt-1">Difficulty analysis, score distribution, and normalization insights per exam</p>
                 </div>
-                <Link
-                    href="/admin/shifts/create"
-                    className="btn-primary flex items-center gap-2"
-                >
-                    <span className="material-symbols-outlined text-xl">add_circle</span>
-                    Create New Shift
-                </Link>
-            </div>
-
-            {/* Toolbar */}
-            <div className="card-base p-4 flex flex-col xl:flex-row gap-4 justify-between items-center bg-white">
-                <div className="flex flex-wrap gap-2 w-full xl:w-auto items-center">
-                    {/* Filters */}
+                <div className="flex items-center gap-3">
                     <select
-                        className="px-3 py-2 border-2 border-gray-200 rounded-xl focus:border-gray-900 outline-none bg-white text-sm font-bold text-gray-700 max-w-[200px]"
-                        value={filters.examId}
-                        onChange={(e) => setFilters(prev => ({ ...prev, examId: e.target.value }))}
+                        className="px-4 py-2.5 border-2 border-gray-900 rounded-xl bg-white text-sm font-bold text-gray-900 min-w-[260px] focus:ring-2 focus:ring-violet-300 outline-none"
+                        value={selectedExam}
+                        onChange={(e) => { setSelectedExam(e.target.value); setPage(1); }}
                     >
-                        <option value="all">All Exams</option>
-                        {exams.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                        <option value="">Select an Exam</option>
+                        {(() => {
+                            const active = exams.filter(e => (e as any).isActive !== false && (e as any).status !== "closed");
+                            const archived = exams.filter(e => (e as any).isActive === false || (e as any).status === "closed");
+                            return (
+                                <>
+                                    {active.length > 0 && <optgroup label="Active Exams">
+                                        {active.map(e => <option key={e.id} value={e.id}>{e.name}{e.tier ? ` ${e.tier}` : ""}</option>)}
+                                    </optgroup>}
+                                    {archived.length > 0 && <optgroup label="Archived / Closed">
+                                        {archived.map(e => <option key={e.id} value={e.id}>{e.name}{e.tier ? ` ${e.tier}` : ""}</option>)}
+                                    </optgroup>}
+                                </>
+                            );
+                        })()}
                     </select>
-
-                    <div className="flex items-center gap-2 border-2 border-gray-200 rounded-xl px-2 py-1.5 focus-within:border-gray-900 bg-white">
-                        <span className="text-xs text-gray-400 font-bold uppercase">From</span>
-                        <input
-                            type="date"
-                            className="outline-none text-sm font-bold text-gray-700 w-32"
-                            value={filters.dateFrom}
-                            onChange={(e) => setFilters(prev => ({ ...prev, dateFrom: e.target.value }))}
-                        />
-                    </div>
-                    <div className="flex items-center gap-2 border-2 border-gray-200 rounded-xl px-2 py-1.5 focus-within:border-gray-900 bg-white">
-                        <span className="text-xs text-gray-400 font-bold uppercase">To</span>
-                        <input
-                            type="date"
-                            className="outline-none text-sm font-bold text-gray-700 w-32"
-                            value={filters.dateTo}
-                            onChange={(e) => setFilters(prev => ({ ...prev, dateTo: e.target.value }))}
-                        />
-                    </div>
-
-                    <select
-                        className="px-3 py-2 border-2 border-gray-200 rounded-xl focus:border-gray-900 outline-none bg-white text-sm font-bold text-gray-700"
-                        value={filters.timeSlot}
-                        onChange={(e) => setFilters(prev => ({ ...prev, timeSlot: e.target.value }))}
+                    <button
+                        onClick={() => { /* refetch handled by React Query */ }}
+                        className="p-2.5 border-2 border-gray-200 rounded-xl hover:border-gray-900 transition-colors"
+                        title="Refresh"
                     >
-                        <option value="all">All Slots</option>
-                        <option value="morning">Morning</option>
-                        <option value="afternoon">Afternoon</option>
-                        <option value="evening">Evening</option>
-                    </select>
+                        <RefreshCw className={cn("w-4 h-4 text-gray-600", loading && "animate-spin")} />
+                    </button>
                 </div>
-
-                {/* Bulk Actions */}
-                {selectedIds.length > 0 && (
-                    <div className="flex items-center gap-2 bg-gray-900 text-white px-4 py-2 rounded-xl animate-in fade-in slide-in-from-bottom-2">
-                        <span className="text-sm font-bold mr-2">{selectedIds.length} Selected</span>
-                        <button onClick={() => handleBulkAction('recalculate')} className="p-1 hover:text-blue-400" title="Recalculate Stats"><span className="material-symbols-outlined">calculate</span></button>
-                        <div className="h-4 w-px bg-gray-700 mx-1"></div>
-                        <button onClick={() => handleBulkAction('delete')} className="p-1 hover:text-red-400" title="Delete"><span className="material-symbols-outlined">delete</span></button>
-                    </div>
-                )}
             </div>
 
-            {/* Table */}
-            <div className="card-base overflow-hidden p-0 bg-white">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                        <thead className="bg-[#F3E8FF] border-b-2 border-gray-900">
-                            <tr>
-                                <th className="p-4 w-10 border-r-2 border-gray-900">
-                                    <input
-                                        type="checkbox"
-                                        className="w-4 h-4 rounded border-gray-900 text-[#A78BFA] focus:ring-[#A78BFA]"
-                                        checked={selectedIds.length === shifts.length && shifts.length > 0}
-                                        onChange={(e) => handleSelectAll(e.target.checked)}
-                                    />
-                                </th>
-                                <th className="p-4 text-xs font-bold text-gray-900 uppercase tracking-wider cursor-pointer hover:bg-purple-100 border-r-2 border-gray-900" onClick={() => handleSort('shiftCode')}>
-                                    <div className="flex items-center gap-1">Code {sorting.field === 'shiftCode' && <span className="material-symbols-outlined text-sm">{sorting.order === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>}</div>
-                                </th>
-                                <th className="p-4 text-xs font-bold text-gray-900 uppercase tracking-wider border-r-2 border-gray-900">Exam</th>
-                                <th className="p-4 text-xs font-bold text-gray-900 uppercase tracking-wider cursor-pointer hover:bg-purple-100 border-r-2 border-gray-900" onClick={() => handleSort('date')}>
-                                    <div className="flex items-center gap-1">Date & Time {sorting.field === 'date' && <span className="material-symbols-outlined text-sm">{sorting.order === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>}</div>
-                                </th>
-                                <th className="p-4 text-xs font-bold text-gray-900 uppercase tracking-wider text-center border-r-2 border-gray-900">Candidates</th>
-                                <th className="p-4 text-xs font-bold text-gray-900 uppercase tracking-wider text-center border-r-2 border-gray-900">Avg Score</th>
-                                <th className="p-4 text-xs font-bold text-gray-900 uppercase tracking-wider border-r-2 border-gray-900">Difficulty</th>
-                                <th className="p-4 text-xs font-bold text-gray-900 uppercase tracking-wider text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y-2 divide-gray-100">
-                            {loading ? (
-                                Array.from({ length: 5 }).map((_, i) => (
-                                    <tr key={i} className="animate-pulse">
-                                        <td className="p-4 border-r border-gray-100"><div className="h-4 w-4 bg-gray-200 rounded"></div></td>
-                                        <td className="p-4 border-r border-gray-100"><div className="h-5 w-24 bg-gray-200 rounded"></div></td>
-                                        <td className="p-4 border-r border-gray-100"><div className="h-5 w-32 bg-gray-200 rounded"></div></td>
-                                        <td className="p-4 border-r border-gray-100"><div className="h-10 w-32 bg-gray-200 rounded"></div></td>
-                                        <td className="p-4 border-r border-gray-100"><div className="h-5 w-12 bg-gray-200 rounded mx-auto"></div></td>
-                                        <td className="p-4 border-r border-gray-100"><div className="h-5 w-12 bg-gray-200 rounded mx-auto"></div></td>
-                                        <td className="p-4 border-r border-gray-100"><div className="h-5 w-20 bg-gray-200 rounded"></div></td>
-                                        <td className="p-4"><div className="h-8 w-8 bg-gray-200 rounded ml-auto"></div></td>
-                                    </tr>
-                                ))
-                            ) : shifts.length === 0 ? (
-                                <tr>
-                                    <td colSpan={8} className="p-12 text-center text-gray-500 font-medium">
-                                        <div className="flex flex-col items-center gap-2">
-                                            <span className="material-symbols-outlined text-4xl text-gray-300">event_busy</span>
-                                            <p>No shifts found matching your filters.</p>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ) : (
-                                shifts.map((shift) => (
-                                    <tr key={shift.id} className="hover:bg-purple-50 transition-colors group">
-                                        <td className="p-4 border-r border-gray-100">
-                                            <input
-                                                type="checkbox"
-                                                className="w-4 h-4 rounded border-gray-300 text-[#A78BFA] focus:ring-[#A78BFA]"
-                                                checked={selectedIds.includes(shift.id)}
-                                                onChange={(e) => handleSelectRow(shift.id, e.target.checked)}
-                                            />
-                                        </td>
-                                        <td className="p-4 border-r border-gray-100 font-mono font-bold text-gray-700">
-                                            {shift.shiftCode}
-                                        </td>
-                                        <td className="p-4 border-r border-gray-100">
-                                            <span className="text-sm font-bold text-gray-900">{shift.examName}</span>
-                                        </td>
-                                        <td className="p-4 border-r border-gray-100">
-                                            <div className="flex flex-col">
-                                                <span className="font-bold text-gray-900">
-                                                    {new Date(shift.date).toLocaleDateString()}
-                                                </span>
-                                                <span className="text-xs text-gray-500 font-medium uppercase">
-                                                    {shift.startTime} - {shift.endTime} ({shift.timeSlot})
-                                                </span>
-                                            </div>
-                                        </td>
-                                        <td className="p-4 border-r border-gray-100 text-center font-bold text-gray-700">
-                                            {shift.candidateCount || 0}
-                                        </td>
-                                        <td className="p-4 border-r border-gray-100 text-center font-bold text-gray-700">
-                                            {shift.avgRawScore?.toFixed(2) || "-"}
-                                        </td>
-                                        <td className="p-4 border-r border-gray-100">
-                                            <span className={cn("px-2 py-1 rounded text-xs font-bold uppercase",
-                                                shift.difficultyLabel === 'difficult' ? "bg-red-100 text-red-700" :
-                                                    shift.difficultyLabel === 'moderate' ? "bg-yellow-100 text-yellow-700" :
-                                                        "bg-green-100 text-green-700"
-                                            )}>
-                                                {shift.difficultyLabel || "N/A"}
-                                            </span>
-                                        </td>
-                                        <td className="p-4 text-right">
-                                            <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <Link
-                                                    href={`/admin/shifts/${shift.id}`}
-                                                    className="p-1.5 text-gray-400 hover:text-[#7C3AED] hover:bg-[#F3E8FF] rounded-lg transition-colors"
-                                                    title="View Details"
-                                                >
-                                                    <span className="material-symbols-outlined text-lg">visibility</span>
-                                                </Link>
-                                                <Link
-                                                    href={`/admin/shifts/${shift.id}/edit`}
-                                                    className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                                    title="Edit"
-                                                >
-                                                    <span className="material-symbols-outlined text-lg">edit</span>
-                                                </Link>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
+            {!selectedExam ? (
+                <div className="flex flex-col items-center justify-center py-20 text-center">
+                    <Layers className="w-12 h-12 text-gray-300 mb-4" />
+                    <h2 className="text-xl font-bold text-gray-900">Select an Exam</h2>
+                    <p className="text-gray-500 text-sm mt-1 max-w-md">Choose an exam from the dropdown above to view its shift-wise analytics, difficulty breakdown, and score distributions.</p>
                 </div>
+            ) : (
+                <>
+                    {/* Summary Cards */}
+                    {summary && (
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                            <StatCard icon={Layers} label="Shifts" value={summary.totalShifts}
+                                sub={`across ${new Set(shifts.map(s => s.date)).size} days`} />
+                            <StatCard icon={Users} label="Total Candidates" value={fmtInt(summary.totalCandidates)}
+                                sub={`~${fmtInt(Math.round(summary.totalCandidates / Math.max(summary.totalShifts, 1)))} per shift`} />
+                            <StatCard icon={Target} label="Exam Average" value={fmt(summary.examAvgScore, 1)}
+                                sub={summary.totalMarks ? `out of ${summary.totalMarks}` : undefined} />
+                            <StatCard icon={TrendingUp} label="Score Range" value={`${fmt(summary.scoreRange.min, 0)}–${fmt(summary.scoreRange.max, 0)}`}
+                                sub={summary.scoreRange.max && summary.scoreRange.min ? `Spread: ${(summary.scoreRange.max - summary.scoreRange.min).toFixed(0)}` : undefined} />
+                            <StatCard icon={Activity} label="Avg Std Dev" value={fmt(summary.avgStdDev, 1)}
+                                sub="score consistency" />
+                            <div className="rounded-2xl border border-gray-200 p-4 flex flex-col gap-1.5">
+                                <div className="flex items-center gap-2 text-gray-500">
+                                    <Gauge className="w-4 h-4" />
+                                    <span className="text-[11px] font-bold uppercase tracking-wider">Difficulty</span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                    <span className="flex items-center gap-1 text-xs font-bold text-emerald-700">🟢 {summary.difficultyDistribution.easy}</span>
+                                    <span className="flex items-center gap-1 text-xs font-bold text-amber-700">🟡 {summary.difficultyDistribution.moderate}</span>
+                                    <span className="flex items-center gap-1 text-xs font-bold text-red-700">🔴 {summary.difficultyDistribution.hard}</span>
+                                </div>
+                                <p className="text-[10px] text-gray-400 font-medium">
+                                    Norm: {fmt(summary.normFactorRange.min, 2)}–{fmt(summary.normFactorRange.max, 2)}
+                                </p>
+                            </div>
+                        </div>
+                    )}
 
-                {/* Pagination */}
-                <div className="p-4 border-t-2 border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-4 bg-gray-50">
-                    <div className="flex items-center gap-4 text-sm text-gray-500 font-medium">
-                        <span>Rows per page:</span>
-                        <select
-                            value={pagination.limit}
-                            onChange={(e) => setPagination(prev => ({ ...prev, limit: Number(e.target.value), page: 1 }))}
-                            className="bg-white border-2 border-gray-200 rounded-lg px-2 py-1 focus:border-gray-900 outline-none"
-                        >
-                            <option value="10">10</option>
-                            <option value="20">20</option>
-                            <option value="50">50</option>
-                        </select>
-                        <span className="hidden sm:inline">
-                            Showing {(pagination.page - 1) * pagination.limit + 1}-{Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}
-                        </span>
+                    {/* Difficulty Methodology Card */}
+                    <details className="group rounded-2xl border border-gray-200 bg-gradient-to-br from-gray-50 to-white overflow-hidden">
+                        <summary className="flex items-center gap-3 p-4 cursor-pointer select-none">
+                            <Info className="w-4 h-4 text-violet-500" />
+                            <span className="text-xs font-bold text-gray-900 uppercase tracking-wider">How Difficulty is Calculated</span>
+                            <ChevronDown className="w-4 h-4 text-gray-400 ml-auto transition-transform group-open:rotate-180" />
+                        </summary>
+                        <div className="px-4 pb-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-gray-600">
+                            <div className="flex gap-3 items-start">
+                                <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center flex-shrink-0">
+                                    <BarChart3 className="w-4 h-4 text-violet-600" />
+                                </div>
+                                <div>
+                                    <p className="font-bold text-gray-900">Mean Score Ratio (40%)</p>
+                                    <p className="mt-0.5 text-[11px]">1 − (avg_score ÷ max_marks). Lower average = harder paper</p>
+                                </div>
+                            </div>
+                            <div className="flex gap-3 items-start">
+                                <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0">
+                                    <Activity className="w-4 h-4 text-amber-600" />
+                                </div>
+                                <div>
+                                    <p className="font-bold text-gray-900">Score Variation (30%)</p>
+                                    <p className="mt-0.5 text-[11px]">Coefficient of variation (σ ÷ μ). High spread = inconsistent difficulty</p>
+                                </div>
+                            </div>
+                            <div className="flex gap-3 items-start">
+                                <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center flex-shrink-0">
+                                    <TrendingDown className="w-4 h-4 text-red-600" />
+                                </div>
+                                <div>
+                                    <p className="font-bold text-gray-900">Topper Gap (30%)</p>
+                                    <p className="mt-0.5 text-[11px]">(top_score − avg_score) ÷ max_marks. Large gap = hard for most candidates</p>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+
+                    {/* Shifts Table */}
+                    <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left">
+                                <thead>
+                                    <tr className="bg-gray-50 border-b border-gray-200">
+                                        {[
+                                            { key: "date", label: "Date", icon: Calendar },
+                                            { key: "shiftNumber", label: "Shift", icon: Hash },
+                                            { key: "timeSlot", label: "Time", icon: Clock },
+                                            { key: "candidateCount", label: "Candidates", icon: Users },
+                                            { key: "avgRawScore", label: "Avg Score", icon: BarChart3 },
+                                            { key: "medianRawScore", label: "Median", icon: Target },
+                                            { key: "stdDev", label: "Std Dev", icon: Activity },
+                                            { key: "maxRawScore", label: "Top Score", icon: TrendingUp },
+                                            { key: "difficultyIndex", label: "Difficulty", icon: Gauge },
+                                            { key: "normFactor", label: "Norm Factor", icon: Scale },
+                                        ].map(col => (
+                                            <th key={col.key}
+                                                className="px-3 py-3 text-[10px] font-black text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors whitespace-nowrap"
+                                                onClick={() => handleSort(col.key)}>
+                                                <div className="flex items-center gap-1">
+                                                    <col.icon className="w-3 h-3" />
+                                                    {col.label}
+                                                    <SortIcon field={col.key} />
+                                                </div>
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                    {loading ? (
+                                        Array.from({ length: 5 }).map((_, i) => (
+                                            <tr key={i} className="animate-pulse">
+                                                {Array.from({ length: 10 }).map((_, j) => (
+                                                    <td key={j} className="px-3 py-3"><div className="h-4 bg-gray-100 rounded w-16" /></td>
+                                                ))}
+                                            </tr>
+                                        ))
+                                    ) : shifts.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={10} className="px-4 py-12 text-center text-gray-400 text-sm font-medium">
+                                                <AlertTriangle className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+                                                No shifts found. Run the normalization pipeline first to populate shift statistics.
+                                            </td>
+                                        </tr>
+                                    ) : shifts.map((shift) => (
+                                        <tr key={shift.id}
+                                            className={cn("hover:bg-violet-50/50 transition-colors cursor-pointer", expandedShift === shift.id && "bg-violet-50/30")}
+                                            onClick={() => setExpandedShift(expandedShift === shift.id ? null : shift.id)}>
+                                            <td className="px-3 py-3">
+                                                <span className="text-sm font-bold text-gray-900">{shift.date}</span>
+                                            </td>
+                                            <td className="px-3 py-3">
+                                                <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-gray-100 text-xs font-black text-gray-700">
+                                                    S{shift.shiftNumber}
+                                                </span>
+                                            </td>
+                                            <td className="px-3 py-3">
+                                                <span className="text-xs font-medium text-gray-500">{shift.timeSlot || "—"}</span>
+                                            </td>
+                                            <td className="px-3 py-3">
+                                                <div className="flex flex-col gap-1 min-w-[100px]">
+                                                    <span className="text-sm font-bold text-gray-900">{fmtInt(shift.candidateCount)}</span>
+                                                    <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
+                                                        <div className="h-full bg-blue-400 rounded-full" style={{ width: `${(shift.candidateCount / maxCandidates) * 100}%` }} />
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="px-3 py-3 min-w-[120px]">
+                                                <ScoreBar value={shift.avgRawScore || 0} max={totalMarks} color="bg-violet-500" />
+                                            </td>
+                                            <td className="px-3 py-3">
+                                                <span className="text-xs font-bold text-gray-700">{fmt(shift.medianRawScore)}</span>
+                                            </td>
+                                            <td className="px-3 py-3">
+                                                <span className={cn("text-xs font-bold",
+                                                    (shift.stdDev || 0) > (summary?.avgStdDev || 50) ? "text-red-600" : "text-gray-600"
+                                                )}>{fmt(shift.stdDev)}</span>
+                                            </td>
+                                            <td className="px-3 py-3">
+                                                <span className="text-xs font-bold text-emerald-700">{fmt(shift.maxRawScore, 0)}</span>
+                                            </td>
+                                            <td className="px-3 py-3">
+                                                <DifficultyBadge label={shift.difficultyLabel} index={shift.difficultyIndex} />
+                                            </td>
+                                            <td className="px-3 py-3">
+                                                <span className="text-xs font-mono font-bold text-gray-600">{fmt(shift.normalizationFactor, 3)}</span>
+                                            </td>
+                                        </tr>
+                                    ))}
+
+                                    {/* Expanded row: section-wise stats */}
+                                    {expandedShift && shifts.find(s => s.id === expandedShift)?.sectionStats && (() => {
+                                        const shift = shifts.find(s => s.id === expandedShift)!;
+                                        const sections = shift.sectionStats!;
+                                        return (
+                                            <tr className="bg-gray-50">
+                                                <td colSpan={10} className="px-4 py-4">
+                                                    <div className="flex flex-col gap-3">
+                                                        <div className="flex items-center gap-2">
+                                                            <Zap className="w-3.5 h-3.5 text-violet-500" />
+                                                            <span className="text-xs font-black text-gray-900 uppercase tracking-wider">
+                                                                Section-wise Performance — {shift.shiftCode}
+                                                            </span>
+                                                            <span className="text-[10px] text-gray-400 ml-2">
+                                                                {shift.statsUpdatedAt ? `Updated: ${new Date(shift.statsUpdatedAt).toLocaleString()}` : ""}
+                                                            </span>
+                                                        </div>
+                                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                                            {Object.entries(sections).map(([code, stats]) => (
+                                                                <div key={code} className="rounded-xl border border-gray-200 bg-white p-3">
+                                                                    <p className="text-[10px] font-black text-gray-500 uppercase tracking-wider">{code}</p>
+                                                                    <div className="mt-2 space-y-1.5">
+                                                                        <div className="flex justify-between text-xs">
+                                                                            <span className="text-gray-500">Avg Score</span>
+                                                                            <span className="font-bold text-gray-900">{fmt(stats.avgScore)}</span>
+                                                                        </div>
+                                                                        <div className="flex justify-between text-xs">
+                                                                            <span className="text-gray-500">Top Score</span>
+                                                                            <span className="font-bold text-emerald-700">{fmt(stats.maxScore)}</span>
+                                                                        </div>
+                                                                        <div className="flex justify-between text-xs">
+                                                                            <span className="text-gray-500">Accuracy</span>
+                                                                            <span className="font-bold text-violet-700">{fmt(stats.avgAccuracy)}%</span>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                        {/* Score range visual */}
+                                                        <div className="flex items-center gap-3 text-xs text-gray-500 mt-1">
+                                                            <span className="font-bold">Score Range:</span>
+                                                            <div className="flex-1 h-2 bg-gray-100 rounded-full relative overflow-hidden">
+                                                                {shift.minRawScore != null && shift.maxRawScore != null && totalMarks > 0 && (
+                                                                    <div className="absolute h-full bg-gradient-to-r from-red-400 via-amber-400 to-emerald-400 rounded-full"
+                                                                        style={{
+                                                                            left: `${(shift.minRawScore / totalMarks) * 100}%`,
+                                                                            width: `${((shift.maxRawScore - shift.minRawScore) / totalMarks) * 100}%`,
+                                                                        }} />
+                                                                )}
+                                                            </div>
+                                                            <span className="font-mono font-bold">{fmt(shift.minRawScore, 0)} – {fmt(shift.maxRawScore, 0)}</span>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })()}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        {/* Pagination */}
+                        <div className="p-3 border-t border-gray-100 flex items-center justify-between bg-gray-50/50">
+                            <span className="text-xs text-gray-500 font-medium">
+                                Showing {shifts.length} of {pagination.total} shifts
+                            </span>
+                            <div className="flex items-center gap-2">
+                                <button disabled={pagination.page === 1}
+                                    onClick={() => setPage(p => p - 1)}
+                                    className="px-3 py-1.5 text-xs font-bold text-gray-700 bg-white border border-gray-200 rounded-lg hover:border-gray-900 disabled:opacity-40 transition-colors">
+                                    Previous
+                                </button>
+                                <span className="text-xs font-bold text-gray-900 px-2">{pagination.page} / {pagination.totalPages}</span>
+                                <button disabled={pagination.page >= pagination.totalPages}
+                                    onClick={() => setPage(p => p + 1)}
+                                    className="px-3 py-1.5 text-xs font-bold text-gray-700 bg-white border border-gray-200 rounded-lg hover:border-gray-900 disabled:opacity-40 transition-colors">
+                                    Next
+                                </button>
+                            </div>
+                        </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                        <button
-                            disabled={pagination.page === 1}
-                            onClick={() => setPagination(prev => ({ ...prev, page: prev.page - 1 }))}
-                            className="p-2 bg-white border-2 border-gray-200 rounded-lg hover:border-gray-900 disabled:opacity-50 disabled:hover:border-gray-200 transition-all font-bold text-gray-700"
-                        >
-                            Previous
-                        </button>
-                        <span className="px-4 font-bold text-gray-900">Page {pagination.page}</span>
-                        <button
-                            disabled={pagination.page >= pagination.totalPages}
-                            onClick={() => setPagination(prev => ({ ...prev, page: prev.page + 1 }))}
-                            className="p-2 bg-white border-2 border-gray-200 rounded-lg hover:border-gray-900 disabled:opacity-50 disabled:hover:border-gray-200 transition-all font-bold text-gray-700"
-                        >
-                            Next
-                        </button>
-                    </div>
-                </div>
-            </div>
+                    {/* Insights Card (Monetization-ready) */}
+                    {summary && shifts.length > 0 && (
+                        <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-violet-50 to-white p-5">
+                            <div className="flex items-center gap-2 mb-4">
+                                <Zap className="w-4 h-4 text-violet-600" />
+                                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Key Insights</h3>
+                                <span className="ml-auto text-[10px] font-bold text-violet-600 bg-violet-100 px-2 py-0.5 rounded-full">Premium Data</span>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                                {(() => {
+                                    const hardest = [...shifts].sort((a, b) => (b.difficultyIndex || 0) - (a.difficultyIndex || 0))[0];
+                                    const easiest = [...shifts].sort((a, b) => (a.difficultyIndex || 0) - (b.difficultyIndex || 0))[0];
+                                    const mostPopulated = [...shifts].sort((a, b) => b.candidateCount - a.candidateCount)[0];
+
+                                    return (
+                                        <>
+                                            <div className="flex items-start gap-3 p-3 rounded-xl bg-white border border-gray-100">
+                                                <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center flex-shrink-0">
+                                                    <TrendingDown className="w-4 h-4 text-red-600" />
+                                                </div>
+                                                <div>
+                                                    <p className="font-bold text-gray-900">Hardest Shift</p>
+                                                    <p className="text-gray-500 mt-0.5">
+                                                        {hardest?.shiftCode} — Avg {fmt(hardest?.avgRawScore, 1)}, Difficulty {((hardest?.difficultyIndex || 0) * 100).toFixed(0)}%
+                                                    </p>
+                                                    <p className="text-gray-400 mt-0.5">
+                                                        Candidates in this shift may benefit from normalization uplift
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-start gap-3 p-3 rounded-xl bg-white border border-gray-100">
+                                                <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                                                    <TrendingUp className="w-4 h-4 text-emerald-600" />
+                                                </div>
+                                                <div>
+                                                    <p className="font-bold text-gray-900">Easiest Shift</p>
+                                                    <p className="text-gray-500 mt-0.5">
+                                                        {easiest?.shiftCode} — Avg {fmt(easiest?.avgRawScore, 1)}, Difficulty {((easiest?.difficultyIndex || 0) * 100).toFixed(0)}%
+                                                    </p>
+                                                    <p className="text-gray-400 mt-0.5">
+                                                        Highest average score, normalization may slightly adjust
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-start gap-3 p-3 rounded-xl bg-white border border-gray-100">
+                                                <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
+                                                    <Users className="w-4 h-4 text-blue-600" />
+                                                </div>
+                                                <div>
+                                                    <p className="font-bold text-gray-900">Most Populated</p>
+                                                    <p className="text-gray-500 mt-0.5">
+                                                        {mostPopulated?.shiftCode} — {fmtInt(mostPopulated?.candidateCount)} candidates
+                                                    </p>
+                                                    <p className="text-gray-400 mt-0.5">
+                                                        Largest sample size gives most reliable normalization
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </>
+                                    );
+                                })()}
+                            </div>
+                        </div>
+                    )}
+                </>
+            )}
         </div>
     );
 }

@@ -3,6 +3,7 @@ import Link from "next/link";
 // import { Space_Grotesk, Inter } from "next/font/google";
 import { Public_Sans } from "next/font/google";
 import "./globals.css";
+import { QueryProvider } from "@/components/providers/query-provider";
 
 const publicSans = Public_Sans({
   subsets: ["latin"],
@@ -31,7 +32,7 @@ export default function RootLayout({
       <body
         className={`${publicSans.variable} font-sans antialiased selection:bg-yellow-300 selection:text-black`}
       >
-        {children}
+        <QueryProvider>{children}</QueryProvider>
       </body>
     </html>
   );

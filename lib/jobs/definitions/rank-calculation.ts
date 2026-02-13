@@ -1,28 +1,50 @@
 
 import { db } from "@/lib/db";
-import { submissions, jobRuns, exams } from "@/lib/db/schema";
-import { eq, desc, sql, and } from "drizzle-orm";
+import { submissions, exams, jobRuns } from "@/lib/db/schema";
+import { eq, sql, and, isNull, count } from "drizzle-orm";
+import { JobContext } from "../helpers";
 
 export async function calculateRanks(jobId: number, metadata?: any) {
-    let examIds: number[] = [];
-
-    if (metadata?.examId) {
-        examIds = [metadata.examId];
-    } else {
-        const allExams = await db.select({ id: exams.id }).from(exams).where(eq(exams.isActive, true));
-        examIds = allExams.map(e => e.id);
-    }
+    const ctx = new JobContext(jobId);
+    const examIds = await ctx.getExamIds(metadata);
 
     if (examIds.length === 0) {
-        await updateProgress(jobId, 100, "No active exams found to process.");
+        await ctx.updateProgress(100, "No active exams found to process.");
         return;
     }
 
-    let processed = 0;
-    for (const examId of examIds) {
-        await updateProgress(jobId, Math.round((processed / examIds.length) * 80) + 10, `Processing exam ${examId}...`);
+    // Count total submissions to process
+    let totalSubs = 0;
+    const warnings: string[] = [];
 
-        // 1. Calculate Overall Ranks
+    for (const examId of examIds) {
+        const [{ c }] = await db.select({ c: count() }).from(submissions).where(eq(submissions.examId, examId));
+        totalSubs += c;
+    }
+    await ctx.setTotal(totalSubs);
+    await ctx.updateProgress(5, `Found ${examIds.length} exam(s) with ${totalSubs} total submissions`);
+
+    for (let i = 0; i < examIds.length; i++) {
+        const examId = examIds[i];
+        // Sub-step progress: distribute 5–95% across exams, then sub-steps within each exam
+        const examBase = Math.round((i / examIds.length) * 85) + 5;
+        const examRange = Math.round(85 / examIds.length);
+        const subPct = (step: number, totalSteps: number) => Math.min(95, examBase + Math.round((step / totalSteps) * examRange));
+
+        // Safety check: warn if normalization hasn't been run
+        const [{ c: totalExamSubs }] = await db.select({ c: count() }).from(submissions).where(eq(submissions.examId, examId));
+        const [{ c: unnormalized }] = await db.select({ c: count() }).from(submissions)
+            .where(and(eq(submissions.examId, examId), isNull(submissions.normalizedScore)));
+
+        if (totalExamSubs > 0 && unnormalized / totalExamSubs > 0.1) {
+            const warnMsg = `⚠ Exam ${examId}: ${unnormalized}/${totalExamSubs} submissions not normalized — ranks will use raw scores as fallback`;
+            warnings.push(warnMsg);
+            await ctx.updateProgress(subPct(0, 4), warnMsg);
+        } else {
+            await ctx.updateProgress(subPct(0, 4), `Calculating ranks for exam ${examId} (${i + 1}/${examIds.length})…`);
+        }
+
+        // 1. Overall Ranks (partition by exam, order by normalized → raw → dob)
         await db.execute(sql`
             WITH RankedSubmissions AS (
                 SELECT 
@@ -45,8 +67,9 @@ export async function calculateRanks(jobId: number, metadata?: any) {
             FROM RankedSubmissions
             WHERE submissions.id = RankedSubmissions.id;
         `);
+        await ctx.updateProgress(subPct(1, 4), `Exam ${examId}: Overall ranks done`);
 
-        // 2. Calculate Category Ranks
+        // 2. Category Ranks (partition by exam + category)
         await db.execute(sql`
             WITH RankedSubmissions AS (
                 SELECT 
@@ -69,8 +92,9 @@ export async function calculateRanks(jobId: number, metadata?: any) {
             FROM RankedSubmissions
             WHERE submissions.id = RankedSubmissions.id;
         `);
+        await ctx.updateProgress(subPct(2, 4), `Exam ${examId}: Category ranks done`);
 
-        // 3. Calculate Shift Ranks
+        // 3. Shift Ranks (partition by shift)
         await db.execute(sql`
             WITH RankedSubmissions AS (
                 SELECT 
@@ -93,19 +117,12 @@ export async function calculateRanks(jobId: number, metadata?: any) {
             FROM RankedSubmissions
             WHERE submissions.id = RankedSubmissions.id;
         `);
+        await ctx.updateProgress(subPct(3, 4), `Exam ${examId}: Shift ranks done`);
 
-        processed++;
+        // Count subs processed for this exam
+        const [{ c }] = await db.select({ c: count() }).from(submissions).where(eq(submissions.examId, examId));
+        await ctx.incrementProcessed(c);
     }
 
-    await updateProgress(jobId, 100, `Rank calculation complete for ${examIds.length} exam(s)`);
-}
-
-async function updateProgress(jobId: number, percent: number, message: string) {
-    await db
-        .update(jobRuns)
-        .set({
-            progressPercent: percent,
-            metadata: sql`jsonb_set(COALESCE(metadata, '{}'::jsonb), '{result}', ${JSON.stringify({ message: message })}::jsonb)`
-        })
-        .where(eq(jobRuns.id, jobId));
+    await ctx.updateProgress(100, `Rank calculation complete for ${examIds.length} exam(s), ${totalSubs} submissions`);
 }
